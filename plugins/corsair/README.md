@@ -1,10 +1,10 @@
 # Corsair connector
 
-A small DSH bundle that makes Corsair's linked apps available as MCP tools in dsh-superagent Worker Sessions. It uses DSH's shipped `@deepseek-ai/dsh-mcp-client`; the Corsair API key is stored through the Host credential service.
+Corsair support is part of the dsh-superagent bundle. The connection panel lives at **Superagent → Settings → Connectors** and makes linked apps available to new Superagent Worker Sessions through DSH's shipped `@deepseek-ai/dsh-mcp-client`.
 
 ## Configure from the panel
 
-1. Open **Superagent → Settings → Connectors** and select **Open Corsair Hub**.
+1. Open the panel and select **Open Corsair Hub**.
 2. In [Corsair Hub](https://hub.corsair.dev), connect GitHub and create a link. Choose **Read** mode for the first connection check.
 3. Copy the link's MCP endpoint and API key into the panel, then save the connection. The endpoint must be an HTTPS Corsair `/mcp` URL.
 4. New dsh-superagent Worker Sessions load the connection and expose tools under `mcp__corsair__`. Existing Workers keep the configuration they started with.
@@ -17,6 +17,6 @@ After saving, create or start a dsh-superagent Worker and ask it: “Use Corsair
 
 The Connector inherits the selected Corsair link's permissions. Choose an appropriate mode in Hub before granting access to write-capable links.
 
-## Standalone bundle
+## Legacy bundle row
 
-Install this directory as a DSH bundle to add the Corsair Worker entry to the dsh-superagent Worker preset. It requires the `dsh-superagent` package because that package owns the Host credential routes and the Worker loader. For other DSH profiles, use a general-purpose MCP client configuration appropriate to the profile's credential flow.
+This directory remains as a compatibility bundle for existing profiles. Its profile-level row is disabled to keep Corsair tools out of the Superagent Router and avoid a duplicate MCP client. The active connector row is declared in the parent dsh-superagent Worker preset.

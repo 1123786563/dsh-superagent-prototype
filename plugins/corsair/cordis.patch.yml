@@ -1,4 +1,5 @@
-# Corsair credentials are managed by the dsh-superagent Connectors panel and read inside each Worker Session.
+# The Superagent Worker preset owns Corsair integration. Keep this legacy global row disabled so it cannot expose tools to the Router.
 - insert:
     - id: corsair-worker
       name: dsh-superagent/corsair-worker
+      disabled: true
