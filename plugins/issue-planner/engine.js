@@ -4,7 +4,9 @@ export class Engine {
  constructor({github,store,config,available,plan,signal}){Object.assign(this,{github,store,config,available,plan,signal});this.inFlight=false;this.status={phase:'ready'}}
  async revalidate(record){
   const readiness=await this.available(),snapshot=await this.github.scan(),busy=new Set([...readiness.busyNumbers,...await this.github.busyNumbers()])
-  if(fingerprint(snapshot,record.number)!==record.fingerprint||!evaluate(snapshot,this.config,busy).candidates.some(i=>i.number===record.number)){
+  const codeChanged=this.github.defaultCommit&&record.commit!==await this.github.defaultCommit()
+  const skillsChanged=this.config.skillDigest&&record.skillDigest!==this.config.skillDigest
+  if(codeChanged||skillsChanged||fingerprint(snapshot,record.number)!==record.fingerprint||!evaluate(snapshot,this.config,busy).candidates.some(i=>i.number===record.number)){
    record.state='stale';record.text=null;await this.store.save();throw new Error('plan context changed before publication')
   }
  }
@@ -34,7 +36,7 @@ export class Engine {
      const output=await this.plan({snapshot,chain:contextFor(snapshot,issue.number),record,signal:this.signal})
      this.store.assertHeld();await this.available()
      if(!output.text?.trim())throw new Error('planner did not submit a complete plan')
-     Object.assign(record,output,{state:'planned'});await this.store.save()
+     Object.assign(record,output,{state:'planned',key:digest([this.config.repository.toLowerCase(),issue.node_id,hash,output.commit,output.skillDigest,digest(output.text)]),receipts:{},parts:[],pending:null});await this.store.save()
     }
     // A fresh full graph also rechecks root, dependencies, comments and active implementation.
     const fresh=await this.github.scan(),currentReady=await this.available(),currentBusy=new Set([...currentReady.busyNumbers,...await this.github.busyNumbers()])

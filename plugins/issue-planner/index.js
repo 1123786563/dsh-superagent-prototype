@@ -64,7 +64,7 @@ export async function apply(ctx,input){
   }
   store=await openStore(canonical,input.repository,()=>controller.abort())
   for(const skill of skills.registrations)releases.push(ctx.skills.register(skill))
-  const config={...input,plannerLogin:login}
+  const config={...input,plannerLogin:login,skillDigest:skills.digest}
   const available=async()=>{
    signal.throwIfAborted();store.assertHeld()
    const [state,settings,currentUser]=await Promise.all([get('state'),get('settings'),github.api('user')])
@@ -78,7 +78,10 @@ export async function apply(ctx,input){
  }
  const cycle=()=>{
   nextPollAt=null
-  running=(async()=>{if(!engine)await initialize();await engine.tick()})().catch(error=>{status={phase:'not_ready',error:error.message};ctx.logger.warn('Issue planner: %s',error.message)})
+  running=(async()=>{
+   if(!engine){try{await initialize()}catch(error){for(const release of releases.splice(0).reverse())release();await store?.close();store=undefined;throw error}}
+   await engine.tick()
+  })().catch(error=>{status={phase:'not_ready',error:error.message};ctx.logger.warn('Issue planner: %s',error.message)})
    .finally(()=>{if(!signal.aborted){nextPollAt=new Date(Date.now()+input.pollSeconds*1000).toISOString();timer=setTimeout(cycle,input.pollSeconds*1000);timer.unref?.()}})
  }
  cycle()

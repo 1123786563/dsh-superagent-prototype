@@ -6,6 +6,15 @@ test('pages read beyond 100 and exclude PRs from scan input',async()=>{
  gh.api=async path=>/[?&]page=1(?:&|$)/.test(path)?Array.from({length:100},(_,i)=>({number:i+1})): [{number:101}]
  assert.equal((await gh.pages('items')).length,101)
 })
+test('scan hydrates all pages, excludes PRs and resolves closed referenced dependencies',async()=>{
+ const gh=new Github({repository:'owner/repo',cli:'unused'})
+ gh.pages=async()=>[...Array.from({length:101},(_,i)=>({number:i+1,node_id:`I${i+1}`,state:'open',body:i===0?'## Blocked by\n#200':'',comments:0})),{number:300,pull_request:{}}]
+ gh.relations=async number=>({parent:null,children:[],dependencies:[]})
+ gh.comments=async()=>[]
+ gh.api=async()=>({number:200,node_id:'I200',state:'closed',state_reason:'completed',comments:0})
+ const result=await gh.scan()
+ assert.equal(result.issues.length,102);assert.ok(!result.issues.some(i=>i.number===300));assert.ok(result.issues.some(i=>i.number===200))
+})
 test('bounded pagination throws instead of accepting a partial list',async()=>{
  const gh=new Github({repository:'owner/repo',cli:'unused'});gh.api=async()=>Array.from({length:100},()=>({}))
  await assert.rejects(gh.pages('items',2),/pagination/)

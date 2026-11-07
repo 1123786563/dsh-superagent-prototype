@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { loadSkills } from '../skills.js'
-import { validatePlan, readBlob } from '../planner.js'
+import { validatePlan, readBlob, planIssue } from '../planner.js'
+import { command } from '../github.js'
+import { apply, Config } from '../index.js'
 import { admissionReady, runWhileAvailable } from '../availability.js'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -40,6 +42,29 @@ test('planner must load writing skill, read source and submit concrete checked p
 })
 test('git blob reads reject untrusted paths before executing git',async()=>{
  for(const path of ['../secret','/etc/passwd','.git/config','a\0b'])await assert.rejects(readBlob('/none','a'.repeat(40),path),/path/)
+})
+test('disabled plugin registers bounded status but starts no agents or external calls',async()=>{
+ let route,cleanup;const ctx={webServer:{getOrigin:()=> 'http://127.0.0.1:3200',register:r=>{route=r;return()=>{}}},effect:f=>{cleanup=f()}}
+ await apply(ctx,{enabled:false,repository:'o/r',executorLogin:'wuyj-agent'})
+ const result={headers:null,body:null,writeHead(status,headers){this.status=status;this.headers=headers},end(body){this.body=body}}
+ route.handler({headers:{host:'127.0.0.1:3200','x-issue-planner-request':'1'},method:'GET',url:'/issue-planner/api/status'},result)
+ assert.equal(result.status,200);assert.equal(JSON.parse(result.body).phase,'disabled');await cleanup()
+ assert.ok(Config)
+})
+test('planner session wires only read capabilities and requires a completed submit',async t=>{
+ const skills=await loadSkills(await fixture(t)),tools=new Map(),root=await mkdtemp(join(tmpdir(),'planner-runtime-'));t.after(()=>rm(root,{recursive:true,force:true}))
+ const commit=(await command('git',['rev-parse','HEAD'])).trim(),remote=(await command('git',['remote','get-url','origin'])).trim().replace(/\.git$/,'')
+ const repository=remote.match(/github\.com[:/]([^/]+\/[^/]+)$/)[1]
+ const plan='# Feature Implementation Plan\nGoal: deliver\nArchitecture: modules\nTech Stack: Node\nSpec: #1\nGlobal Constraints: root\nReview Focus: failures\n### Task 1\nFiles: README.md\nInterfaces: work()\n- [ ] Write failing test\nRun: node --test tests/a.js\nExpected: PASS\n'
+ let work,disposed=false,restricted,endKind='completed'
+ const scope={tools:{restrict:filter=>{restricted=filter;return()=>{}},register:def=>{tools.set(def.name,def);return()=>{}}},systemPrompt:{section:()=>()=>{}}}
+ const ctx={agentDefaultModel:{currentSelection:()=>({provider:'fake',model:'fake'})},agents:{async create(options){await options.setup(scope);return{agent:{followup(){work=(async()=>{await tools.get('skill').execute({name:'superpowers-writing-plans'});await tools.get('planner_read').execute({path:'README.md'});await tools.get('planner_submit').execute({text:plan},{concludeTurn(){}})})()},whenIdle:()=>work,cancel(){},session:{ownEvents:()=>[{type:'turn/end',data:{reason:{kind:endKind}}}]}},dispose:async()=>{disposed=true}}}}}
+ const record={number:1},issue={number:1,title:'test',body:'',children:[],dependencies:[]}
+ const github={repo:path=>path,api:async path=>path?{sha:commit}:{default_branch:'main'}}
+ const output=await planIssue(ctx,{sourceDirectory:process.cwd(),repository,planTimeoutSeconds:60,maxContextChars:180000},skills,github,{root,save:async()=>{},assertHeld(){}},{snapshot:{issues:[issue]},chain:[issue],record,signal:new AbortController().signal})
+ assert.equal(output.text,plan);assert.equal(output.commit,commit);assert.ok(disposed);assert.deepEqual(restricted,{allow:[]});assert.ok(!tools.has('bash'));assert.ok(output.sourceReads.includes('README.md'))
+ endKind='error'
+ await assert.rejects(planIssue(ctx,{sourceDirectory:process.cwd(),repository,planTimeoutSeconds:60,maxContextChars:180000},skills,github,{root,save:async()=>{},assertHeld(){}},{snapshot:{issues:[issue]},chain:[issue],record,signal:new AbortController().signal}),/without a completed plan/)
 })
 test('independent allowlisted regular account is required for explicit dispatch',()=>{
  const state={paused:false,setup:{problem:null,accounts:{repository:'o/r',agent:'wuyj-agent'}}}

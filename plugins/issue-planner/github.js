@@ -28,34 +28,45 @@ export class Github {
  async graph(query,variables){const result=await this.api('graphql',{query,variables});if(result.errors||!result.data)throw new Error('GraphQL incomplete: '+JSON.stringify(result.errors));return result.data}
  async relations(number){
   const [owner,name]=this.config.repository.split('/'), all={parent:null,children:[],dependencies:[]}
-  for(const field of ['subIssues','blockedBy']){
-   let cursor=null
-   for(let page=0;page<100;page++){
-    const data=await this.graph(`query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){issue(number:$number){parent{number repository{nameWithOwner}} ${field}(first:100,after:$cursor){nodes{number repository{nameWithOwner}} pageInfo{hasNextPage endCursor}}}}}`,{owner,name,number,cursor})
-    const issue=data.repository?.issue;if(!issue)throw new Error(`unreadable issue #${number}`)
+  const cursors={subIssues:null,blockedBy:null},done=new Set()
+  for(let page=0;page<100;page++){
+   const fields=['subIssues','blockedBy'].filter(f=>!done.has(f))
+   const declarations=fields.map(f=>`$${f}Cursor:String`).join(',')
+   const selection=fields.map(f=>`${f}(first:100,after:$${f}Cursor){nodes{number repository{nameWithOwner}} pageInfo{hasNextPage endCursor}}`).join(' ')
+   const variables={owner,name,number,...Object.fromEntries(fields.map(f=>[`${f}Cursor`,cursors[f]]))}
+   const data=await this.graph(`query($owner:String!,$name:String!,$number:Int!,${declarations}){repository(owner:$owner,name:$name){issue(number:$number){parent{number repository{nameWithOwner}} ${selection}}}}`,variables)
+   const issue=data.repository?.issue;if(!issue)throw new Error(`unreadable issue #${number}`)
+   all.parent=issue.parent?.number??null
+   for(const field of fields){
     const items=issue[field];if(!items?.nodes||!items.pageInfo)throw new Error('incomplete relations')
     for(const ref of [issue.parent,...items.nodes].filter(Boolean))if(ref.repository?.nameWithOwner?.toLowerCase()!==this.config.repository.toLowerCase())throw new Error('cross repository relationship requires manual attention')
-    all.parent=issue.parent?.number??null;all[field==='subIssues'?'children':'dependencies'].push(...items.nodes.map(n=>n.number))
-    if(!items.pageInfo.hasNextPage)break
-    if(!items.pageInfo.endCursor||items.pageInfo.endCursor===cursor||page===99)throw new Error('relation pagination incomplete')
-    cursor=items.pageInfo.endCursor
+    all[field==='subIssues'?'children':'dependencies'].push(...items.nodes.map(n=>n.number))
+    if(!items.pageInfo.hasNextPage)done.add(field)
+    else {if(!items.pageInfo.endCursor||items.pageInfo.endCursor===cursors[field])throw new Error('relation pagination incomplete');cursors[field]=items.pageInfo.endCursor}
    }
+   if(done.size===2)return all
   }
-  return all
+  throw new Error('relation pagination incomplete')
+ }
+ async defaultCommit(){
+  const meta=await this.api(this.repo('')),head=await this.api(this.repo(`commits/${encodeURIComponent(meta.default_branch)}`))
+  if(!/^[0-9a-f]{40,64}$/.test(head.sha))throw new Error('invalid default branch commit')
+  return head.sha
  }
  async scan(){
   const initial=(await this.pages(this.repo('issues?state=open&sort=created&direction=asc'))).filter(i=>!i.pull_request)
-  const issues=new Map(),queue=initial.map(i=>i.number), raw=new Map(initial.map(i=>[i.number,i]))
+  const issues=new Map(),queue=initial.map(i=>i.number), raw=new Map(initial.map(i=>[i.number,i])),scheduled=new Set(queue)
   while(queue.length){
-   const number=queue.shift();if(issues.has(number))continue
-   if(issues.size>=5000)throw new Error('issue graph exceeds 5000; snapshot incomplete')
-   const issue=raw.get(number)??await this.api(this.repo(`issues/${number}`))
-   if(issue.pull_request)throw new Error('issue relation points to a pull request')
-   const relations=await this.relations(number),comments=await this.comments(number)
-   issues.set(number,{...issue,...relations,comments})
-   // Explicit markdown links in body sections can point to closed ancestors/dependencies.
-   const sections=[...String(issue.body??'').matchAll(/^#{1,6}\s+(?:Parent|父 Issue|父任务|Blocked by|Depends on|依赖|阻塞依赖)\s*:?\s*$([\s\S]*?)(?=^#{1,6}\s|$(?![\s\S]))/gim)].map(m=>m[1]).join('\n')
-   queue.push(...[relations.parent,...relations.children,...relations.dependencies,...[...sections.matchAll(/#(\d+)\b/g)].map(m=>Number(m[1]))].filter(n=>n&&!issues.has(n)))
+   await Promise.all(queue.splice(0,4).map(async number=>{
+    if(issues.size>=5000)throw new Error('issue graph exceeds 5000; snapshot incomplete')
+    const issue=raw.get(number)??await this.api(this.repo(`issues/${number}`))
+    if(issue.pull_request)throw new Error('issue relation points to a pull request')
+    const relations=await this.relations(number),comments=issue.comments===0?[]:await this.comments(number)
+    issues.set(number,{...issue,...relations,comments})
+    // Explicit markdown links in body sections can point to closed ancestors/dependencies.
+    const sections=[...String(issue.body??'').matchAll(/^#{1,6}\s+(?:Parent|父 Issue|父任务|Blocked by|Depends on|依赖|阻塞依赖)\s*:?\s*$([\s\S]*?)(?=^#{1,6}\s|$(?![\s\S]))/gim)].map(m=>m[1]).join('\n')
+    for(const n of [relations.parent,...relations.children,...relations.dependencies,...[...sections.matchAll(/#(\d+)\b/g)].map(m=>Number(m[1]))].filter(Boolean))if(!scheduled.has(n)){scheduled.add(n);queue.push(n)}
+   }))
   }
   return {issues:[...issues.values()]}
  }

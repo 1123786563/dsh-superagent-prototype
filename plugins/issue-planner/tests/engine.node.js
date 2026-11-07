@@ -62,6 +62,14 @@ test('restart after a confirmed part rechecks current eligibility before sending
  f.comments.length=0;record.pending=null;record.receipts={};f.issues[0].state='closed'
  await f.engine.tick();assert.equal(f.posts.length,1);assert.equal(record.state,'stale')
 })
+test('default branch advances or execution skill changes invalidate unpublished plans',async()=>{
+ for(const change of ['code','skills']){
+  const f=fixture()
+  if(change==='code')f.github.defaultCommit=async()=> 'b'.repeat(40)
+  else f.config.skillDigest='new-version'
+  await f.engine.tick();assert.equal(f.posts.length,0)
+ }
+})
 test('changed requirements before publishing invalidate plan',async()=>{
  const f=fixture();f.engine.plan=async()=>{f.issues[0].body='new requirement';return{text:'plan',commit:'a',sessionId:'s'}}
  await f.engine.tick();assert.equal(f.posts.length,0);assert.equal(f.store.data.records.I1.state,'stale')
