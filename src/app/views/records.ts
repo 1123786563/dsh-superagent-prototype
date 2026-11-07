@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { canRetry, followupOwners, latestReport, liveTicket, settled, threadKey, ticketStage, type ActorRef, type ChannelRef, type Decision,
   type DecisionKind, type Thread, type ThreadFacts, type Ticket, type TicketStage, type Trigger } from '../../core/index.ts'
 import { allowedSender, listedBot } from '../../policy.ts'
-import { pullOf } from '../../sources/github-pull.ts'
+import { pullOf, issueOf } from '../../sources/github-pull.ts'
+import { KV } from '../../kv.ts'
 import type { ChannelLink, Localized } from '../../sources/kind.ts'
 import type { SourceRegistry } from '../../sources/registry.ts'
 import { workerSessionId } from '../../executor/dsh.ts'
@@ -141,15 +142,19 @@ export function threadFacts(store: Store, thread: Thread) {
 export type ThreadFactsView = ReturnType<typeof threadFacts>
 export const ticketLine = (view: Snapshot, ticket: Ticket) => {
   const subscribed = view.threadsOf(ticket.id)
+  const issue = issueOf(view.store.triggers.get(ticket.origin.triggerId))
+  const pending = view.store.get(KV.runtime.issueClosure(ticket.id))
+  const retry = view.sources.instance('github')?.enabled && pending?.issue === issue
+    && ticket.follows?.some(follow => follow.thread === `github:${pending?.pull}`) ? pending : undefined
   const latestPull = liveTicket(ticket) ? pullOf(ticket) : undefined
-  const mergePull = latestPull && view.sources.instance('github')?.enabled && subscribed.some(thread =>
+  const mergePull = retry?.pull ?? (latestPull && view.sources.instance('github')?.enabled && subscribed.some(thread =>
     thread.key === `github:${latestPull}` && ticket.follows?.some(follow => !follow.closed && follow.thread === thread.key)
       && !thread.context?.includes(ticket.id) && thread.meta.isPr === true && thread.meta.number === latestPull
       && thread.meta.pullState === 'open' && thread.meta.mergeable === true
       && (thread.meta.mergeableState === 'clean' || thread.meta.mergeableState === 'unstable')
-      && thread.meta.isDraft === false) ? latestPull : undefined
+      && thread.meta.isDraft === false) ? latestPull : undefined)
   const summary = ticketSummary(ticket)
-  return { ...summary, actions: { ...summary.actions, ...(mergePull ? { merge: mergePull } : {}) },
+  return { ...summary, actions: { ...summary.actions, ...(mergePull ? { merge: mergePull, ...issue ? { mergeIssue: issue } : {}, ...retry ? { mergeRetry: true } : {} } : {}) },
     threads: subscribed.map(thread => threadFacts(view.store, thread)) }
 }
 export function threadTitle(store: Pick<Store, 'read'>, thread: Thread): string {

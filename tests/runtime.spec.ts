@@ -403,6 +403,119 @@ it('offers the merge action only while the followed PR reads mergeable, and merg
   success.mockRestore()
 })
 
+/** Exercises real API parsing over an entirely mocked transport; no GitHub mutations leave this test. */
+async function issueMergeFixture() {
+  const trigger = commentTrigger({ id: 700, body: '@agent-bot please fix', user: { login: 'alice' },
+    html_url: 'https://github.com/acme/widgets/issues/7#issuecomment-700', created_at: '2026-09-09T00:00:00Z' },
+  { number: 7, isPr: false }, 'conversation', 'agent-bot')
+  const { ticket, sessionId } = await acceptedTicket(trigger)
+  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'pr ready', pr_number: 42 })
+  runtime.store.threads.patchMeta('github:42', { pullState: 'open', mergeable: true, mergeableState: 'clean', isDraft: false })
+  const state = { merged: false, closed: false, acceptMerge: true, failClose: false, loseMergeResponse: false, issueIsPr: false }
+  const calls: string[] = []
+  vi.mocked(Commands.prototype.gh).mockRestore()
+  const transport = vi.mocked(Commands.prototype.run).mockImplementation(async (_program, args) => {
+    const path = args[1], method = args[args.indexOf('-X') + 1]
+    if (path === 'repos/acme/widgets/pulls/42/merge') {
+      calls.push('merge')
+      state.merged = state.acceptMerge
+      if (state.loseMergeResponse) throw new Error('response lost')
+      return JSON.stringify({ merged: state.merged, message: 'merge refused' })
+    }
+    if (path === 'repos/acme/widgets/pulls/42') {
+      calls.push('read-pr')
+      return JSON.stringify({ state: state.merged ? 'closed' : 'open', merged: state.merged, draft: false,
+        mergeable: true, mergeable_state: 'clean', head: { sha: 'head-1' } })
+    }
+    if (path === 'repos/acme/widgets/issues/7') {
+      calls.push(method === 'PATCH' ? 'close-issue' : 'read-issue')
+      if (method === 'PATCH') {
+        expect(state.merged).toBe(true)
+        if (state.failClose) throw new Error('Issue permission denied')
+        state.closed = true
+      }
+      return JSON.stringify({ number: 7, state: state.closed ? 'closed' : 'open',
+        ...state.issueIsPr ? { pull_request: { url: 'not-an-issue' } } : {} })
+    }
+    throw new Error(`unexpected mocked command: ${args.join(' ')}`)
+  })
+  const row = () => ticketList(viewsOf(runtime), runtime.store.tickets.get(ticket.id)?.ended ? 'ended' : 'open', 0, 100).items.find(item => item.id === ticket.id)!
+  return { ticket, trigger, state, calls, transport, row }
+}
+
+it('closes the originating Issue as completed only after merging, without closing unrelated Issue subscriptions', async () => {
+  const f = await issueMergeFixture()
+  const thread = runtime.store.threads.get('github:7')!
+  runtime.store.threads.save({ ...thread, key: 'github:99', ref: { source: 'github', id: '99' }, meta: { number: 99, isPr: false } })
+  expect(f.row().actions).toMatchObject({ merge: 42, mergeIssue: 7 })
+  await expect(runtime.mergeTicket(f.ticket.id)).resolves.toEqual({ merged: true, number: 42, closedIssue: 7 })
+  expect(f.calls).toEqual(['read-pr', 'merge', 'read-issue', 'close-issue'])
+  expect(f.transport).toHaveBeenCalledWith(AGENT(), ['api', 'repos/acme/widgets/issues/7', '-X', 'PATCH', '-f', 'state=closed', '-f', 'state_reason=completed'])
+  expect(runtime.store.get(KV.runtime.issueClosure(f.ticket.id))).toBeUndefined()
+  expect(runtime.store.tickets.get(f.ticket.id)?.ended?.outcome).toBe('merged')
+})
+
+it('keeps the Issue open when GitHub refuses the merge and clears the incomplete intent', async () => {
+  const f = await issueMergeFixture(); f.state.acceptMerge = false
+  await expect(runtime.mergeTicket(f.ticket.id)).rejects.toThrow('merge refused')
+  expect(f.calls).toEqual(['read-pr', 'merge'])
+  expect(f.state.closed).toBe(false)
+  expect(runtime.store.get(KV.runtime.issueClosure(f.ticket.id))).toBeUndefined()
+})
+
+it('retains closure retry after the PR observer ends the Ticket and after a restart; retry never merges twice', async () => {
+  const f = await issueMergeFixture(); f.state.failClose = true
+  await expect(runtime.mergeTicket(f.ticket.id)).rejects.toThrow('PR #42 已合并，但 Issue #7 关闭失败')
+  runtime.engine.threadClosed({ source: 'github', id: '42' }, 'merged', new Date().toISOString())
+  expect(runtime.store.tickets.get(f.ticket.id)?.ended?.outcome).toBe('merged')
+  expect(f.row().actions).toMatchObject({ merge: 42, mergeIssue: 7, mergeRetry: true })
+  await restart(); await runtime.ready
+  runtime.sources.register(githubKind)
+  expect(f.row().actions).toMatchObject({ merge: 42, mergeIssue: 7, mergeRetry: true })
+  f.state.failClose = false
+  await expect(runtime.mergeTicket(f.ticket.id)).resolves.toEqual({ merged: true, number: 42, closedIssue: 7 })
+  expect(f.calls.filter(call => call === 'merge')).toHaveLength(1)
+  expect(f.row().actions).not.toHaveProperty('merge')
+  expect(runtime.store.get(KV.runtime.issueClosure(f.ticket.id))).toBeUndefined()
+})
+
+it('recognizes an already closed Issue without issuing another close request', async () => {
+  const f = await issueMergeFixture(); f.state.closed = true
+  await expect(runtime.mergeTicket(f.ticket.id)).resolves.toEqual({ merged: true, number: 42, closedIssue: 7 })
+  expect(f.calls).toEqual(['read-pr', 'merge', 'read-issue'])
+})
+
+it('never closes a PR through the Issue endpoint even if stored origin metadata called it an Issue', async () => {
+  const f = await issueMergeFixture(); f.state.issueIsPr = true
+  await expect(runtime.mergeTicket(f.ticket.id)).rejects.toThrow('Issue #7 关闭失败')
+  expect(f.calls).not.toContain('close-issue')
+  expect(runtime.store.get(KV.runtime.issueClosure(f.ticket.id))).toBeTruthy()
+})
+
+it('recovers a lost merge response by reading the merged PR and closing its Issue once', async () => {
+  const f = await issueMergeFixture(); f.state.loseMergeResponse = true
+  await expect(runtime.mergeTicket(f.ticket.id)).rejects.toThrow('response lost')
+  expect(runtime.store.get(KV.runtime.issueClosure(f.ticket.id))).toBeTruthy()
+  await expect(runtime.mergeTicket(f.ticket.id)).resolves.toEqual({ merged: true, number: 42, closedIssue: 7 })
+  expect(f.calls.filter(call => call === 'merge')).toHaveLength(1)
+  expect(f.calls.filter(call => call === 'close-issue')).toHaveLength(1)
+})
+
+it('shares one merge and Issue closure for concurrent repeated clicks', async () => {
+  const f = await issueMergeFixture()
+  const first = runtime.mergeTicket(f.ticket.id), second = runtime.mergeTicket(f.ticket.id)
+  await expect(Promise.all([first, second])).resolves.toHaveLength(2)
+  expect(f.calls.filter(call => call === 'merge')).toHaveLength(1)
+  expect(f.calls.filter(call => call === 'close-issue')).toHaveLength(1)
+})
+
+it('rejects an originating Issue URL from another repository before making any merge or closure request', async () => {
+  const f = await issueMergeFixture()
+  runtime.store.triggers.save({ ...f.trigger, url: 'https://github.com/acme/other/issues/7' })
+  await expect(runtime.mergeTicket(f.ticket.id)).rejects.toThrow('different repository')
+  expect(f.calls).toEqual([])
+})
+
 it('shows a message that carries JSON, with or without a label, as its label and values on lines', () => {
   const text = `GitHub PR #7 CI: ${JSON.stringify({ head: 'abc1234', checks: [{ name: 'e2e', status: 'completed', conclusion: 'failure' }, { name: 'lint', status: 'in_progress', conclusion: null }], statuses: [] })}`
   expect(readable(text)).toBe('GitHub PR #7 CI\nhead: abc1234\nchecks:\n- e2e · completed · failure\n- lint · in_progress\nstatuses: ')

@@ -4,6 +4,7 @@ import { resolve, join } from 'node:path'
 import { parse, stringify } from 'yaml'
 import { eligible, revisionKey } from './policy.js'
 import { buildActPlan } from './act-plan.js'
+import { executionState } from './execution-window.js'
 import { validateLocalActions } from './act-actions.js'
 import { actObserver, command, isolatedEnvironment, runActProcess, cleanupActResources } from './act-process.js'
 
@@ -49,9 +50,9 @@ export class LocalCi {
     return target
   }
   async stillCurrent(pr, signal = this.signal) {
-    if (signal.aborted || !await this.available(signal)) return false
+    if (signal.aborted || !executionState(this.config).allowed || !await this.available(signal)) return false
     const fresh = await this.github.pull(pr.number, signal)
-    return eligible(fresh, this.config) && revisionKey(fresh) === revisionKey(pr)
+    return executionState(this.config).allowed && eligible(fresh, this.config) && revisionKey(fresh) === revisionKey(pr)
   }
   async prepareCheckout(pr, workspace, signal) {
     const options = this.options

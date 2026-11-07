@@ -1,0 +1,1 @@
+{"meta":{"title":"PR 自动审核配置","description":"为 Superagent 设置页提供 PR 自动审核与合并的配置读取、校验和持久保存，独立于审核任务运行。"}}

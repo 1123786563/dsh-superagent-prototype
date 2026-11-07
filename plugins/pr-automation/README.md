@@ -57,9 +57,44 @@ OpenBot 配置使用 `ciMode: local`，本地只运行 `.github/workflows/ci.yml
 
 如果上游版本或 runner image 改变，先检查本地 CI 计划和 image diff，再更新 `localCi.runnerImage` 的 sha256；禁止在插件启动时静默改用 tag。
 
-## 状态与暂停
+## 界面配置与暂停
 
-在 Harness **插件管理器 → PR 自动审核与合并** 中配置或停用。停用会取消正在运行的模型请求、停止后续轮询并释放状态锁。Superagent 的暂停开关也会暂停此插件启动新任务和提交 review / merge。
+打开当前 Harness 左侧 **Superagent → 设置 → PR 自动审核与合并**。页面提供总开关、自动合并开关、轮询间隔，以及每日执行时段、时区、开始和结束时间。修改后会出现 **保存** 和 **恢复当前设置**；保存会持久化到当前 profile 并应用到插件，恢复会重新读取服务器当前配置并放弃未保存的编辑。关闭每日执行时段表示全天允许执行，对应时间输入会禁用。
+
+页面每 15 秒刷新运行状态，显示监听仓库、标签、执行许可和具体轮询时刻；刷新不会覆盖未保存的草稿。非法输入会阻止保存。如果其他页面修改了配置，保存会提示冲突并保留草稿，需先读取当前设置再修改。表单只修改列出的字段，保留仓库、模型和 CI 参数。
+
+插件管理器仍用于安装或停用整个 bundle。停用会取消正在运行的模型请求、停止后续轮询并释放状态锁。Superagent 的暂停开关也会暂停此插件启动新任务和提交 review / merge。
+
+| 配置 | 含义 | 默认值 |
+| --- | --- | --- |
+| `enabled` | 总开关；关闭后不轮询 PR、不审核、不执行本地 CI、不自动合并 | 开启 |
+| `autoMerge` | 自动合并开关；关闭后仍可审核和执行 CI，但不提交合并 | 本次部署开启 |
+| `pollSeconds` | 每轮完成后等待多少秒再轮询，范围 60–3600 秒 | 60 秒 |
+| `executionWindow.enabled` | 是否限制每天允许执行的时段；关闭表示全天允许 | 关闭 |
+| `executionWindow.timeZone` | IANA 时区，按该地区本地时间判断 | `Asia/Shanghai` |
+| `executionWindow.start` / `end` | 开始与结束时间，24 小时制 `HH:mm` | `09:00` / `22:00` |
+
+例如，每 5 分钟轮询、每天上海时间 09:00–22:00 允许执行：
+
+```json
+{
+  "enabled": true,
+  "autoMerge": true,
+  "pollSeconds": 300,
+  "executionWindow": {
+    "enabled": true,
+    "timeZone": "Asia/Shanghai",
+    "start": "09:00",
+    "end": "22:00"
+  }
+}
+```
+
+以上代码仅说明字段对应关系；日常使用直接在上述界面填写并保存，无需粘贴 JSON。表单会保留仓库、模型和 CI 参数。当前部署保持总开关开启、60 秒轮询、时间窗关闭，没有替用户启用示例时段。
+
+开始时间包含在允许范围内，结束时间不包含。`22:00`–`06:00` 表示跨午夜；开始和结束不可相同，要全天执行请关闭时间窗。窗口外显示 `outside_window`，不查询新的 PR，也不启动模型审核；开始窗口后在下一轮轮询恢复，因此可能延迟一个轮询间隔。已有审核和 CI 成功证据仍须匹配当前 head/base/配置，才可复用。
+
+审核返回后、启动 CI 前以及提交合并前均复查时段。窗口关闭时，已发出的模型调用可能继续返回，但不会据此在窗口外发布 review 或合并；运行中的本地 CI 每 30 秒检查可执行性，检测到关闭后取消并清理。修改普通配置会重建插件并取消旧实例的请求；已提交给 GitHub 的 merge 请求无法撤回。单次本地 CI 的最长耗时仍由 `localCi.timeoutSeconds` 单独控制。
 
 当前部署还通过管理 API 将 Superagent 的 delivery 提示词保存为 revision 3：worker 不再自行合并或启用 GitHub auto-merge；没有标签的 PR 留给人工合并，worker 只有收到人明确要求时才能添加标签。推送或重写已加入流程的 PR 前，worker 须暂时移除标签，验证新版本后仅在原授权仍有效时恢复。新 commit（包括仅重写提交信息）必须重新审核。其他团队提示词保持原值；原 revision 2 的备份保存在审核状态目录内的 `superagent-prompts-before-integration.json`。这项 worker 行为约束属于提示词，不是对 danger-full-access worker 的 OS 权限隔离；插件自身的门禁由代码执行。
 
@@ -70,7 +105,7 @@ curl -fsS -H 'x-pr-automation-request: 1' \
   http://127.0.0.1:3200/pr-automation/api/status
 ```
 
-返回监听仓库、标签、模型、自动合并开关、最后轮询时间和各 PR 的 `reviewing`、`changes_requested`、`manual`、`waiting`、`merged` 或 `error` 状态及阻塞原因。接口只允许本机 Host、同源请求及 GET，要求上面的专用请求头。
+返回监听仓库、标签、模型、总开关、自动合并开关、轮询秒数、每日时段配置、当前执行许可、下次轮询时间和最后轮询时间，以及各 PR 的 `reviewing`、`changes_requested`、`manual`、`waiting`、`merged` 或 `error` 状态及阻塞原因。接口只允许本机 Host、同源请求及 GET，要求上面的专用请求头。
 
 审核记录位于配置的 `stateDir/reviews.json`，包含模型、耗时、结果、发布 review id 和合并 commit。目录默认权限 0700，记录默认 0600，采用临时文件加原子重命名写入；通过 proper-lockfile 的目录锁和心跳限制同一目录只运行一个实例，锁失效时停止后续发布与合并。目录在本仓库忽略的 `.artifacts/` 下，包含代码审核内容，应按本地工程资料保管。
 
@@ -78,7 +113,7 @@ curl -fsS -H 'x-pr-automation-request: 1' \
 
 ## 安装与配置
 
-通过 Harness 的 `plugin_manager install_bundle` 安装本目录。不要手写 profile 的包文件或 patch。部署专用参数在本包的 `cordis.patch.yml` 中，安装后的配置可在插件管理器调整。
+通过 Harness 的 `plugin_manager install_bundle` 安装本目录。不要手写 profile 的包文件或 patch。部署专用参数在本包的 [cordis.patch.yml](./cordis.patch.yml) 中。日常开关、轮询与时段在 **Superagent → 设置 → PR 自动审核与合并** 中调整；其他部署参数仍按安装配置维护。
 
 主要参数：
 

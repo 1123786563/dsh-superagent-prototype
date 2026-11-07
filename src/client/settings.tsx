@@ -9,6 +9,7 @@ import { SETTINGS_GROUPS, settingsRoute, type SettingsGroup } from './route.ts'
 import { SettingsProvider } from './settings-kit.tsx'
 import { SourceSettings } from './source.tsx'
 import { CorsairConnector } from './connectors.tsx'
+import { PrAutomationSettings } from './pr-automation.tsx'
 
 const STAGE_GROUPS: readonly SettingsGroup[] = ['source', 'eval', 'execution']
 export function SettingsPage({ group, query, state, deploymentForm }: {
@@ -23,6 +24,7 @@ export function SettingsPage({ group, query, state, deploymentForm }: {
       case 'prompts': return <PromptsPage />
       case 'deployment': return <DeploymentPage setup={state.setup} form={deploymentForm} />
       case 'connectors': return <CorsairConnector />
+      case 'pr-automation': return <PrAutomationSettings />
     }
   })()
   return <div className="dt-settings">

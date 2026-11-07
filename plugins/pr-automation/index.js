@@ -78,7 +78,28 @@ export async function openStore(directory) {
   } catch (error) { await close(); throw error }
 }
 
+function registerStatus(ctx, readStatus) {
+  return ctx.webServer.register({ kind: 'exact', path: '/pr-automation/api/status', handler: (req, res) => {
+    const host = req.headers.host, port = new URL(ctx.webServer.getOrigin()).port
+    if (![ `127.0.0.1:${port}`, `localhost:${port}` ].includes(host)
+      || req.headers['x-pr-automation-request'] !== '1'
+      || req.headers.origin && req.headers.origin !== `http://${host}`) { res.writeHead(403); res.end(); return }
+    if (req.method !== 'GET') { res.writeHead(405, { Allow: 'GET' }); res.end(); return }
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
+    res.end(JSON.stringify(readStatus()))
+  } })
+}
+
 export async function apply(ctx, input) {
+  validateExecutionConfig(input)
+  if (input.enabled === false) {
+    const route = registerStatus(ctx, () => ({ repository: input.repository, label: input.label, enabled: false,
+      autoMerge: input.autoMerge, pollSeconds: input.pollSeconds, executionWindow: input.executionWindow,
+      execution: executionState(input), nextPollAt: null, phase: 'disabled', lastPoll: null, lastError: null,
+      ciMode: input.ciMode, ciJobs: input.localCi.jobs.map(({ workflow, job }) => ({ workflow, job })), ciRuns: [], pulls: {} }))
+    ctx.effect(() => route)
+    return
+  }
   if (!!input.provider !== !!input.model) throw new Error('provider 和 model 必须同时设置')
   const origin = new URL(input.superagentOrigin)
   if (origin.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(origin.hostname) || origin.pathname !== '/') throw new Error('Superagent 地址须为本机 HTTP origin')
@@ -92,7 +113,7 @@ export async function apply(ctx, input) {
   await ctx.llm.resolveModelInfo(model.provider, model.model, signal)
   const config = { ...input, model, login }; config.policyKey = policyKey(config)
   const store = await openStore(input.stateDir)
-  let running = Promise.resolve(), timer, route
+  let running = Promise.resolve(), timer, route, nextPollAt = null
   ctx.effect(() => async () => {
     controller.abort(); clearTimeout(timer); route?.(); await running; await store.close()
   })
@@ -103,9 +124,10 @@ export async function apply(ctx, input) {
   }
   const available = async (availabilitySignal = signal) => {
     store.assertHeld()
+    if (!executionState(input).allowed) return false
     const [state, settings] = await Promise.all([get('state', availabilitySignal), get('settings', availabilitySignal)])
     const source = settings.sources.find(item => item.id === 'github')
-    return !state.paused && !state.setup.problem && source?.value.enabled
+    return executionState(input).allowed && !state.paused && !state.setup.problem && source?.value.enabled
       && source.value.config.repository.toLowerCase() === input.repository.toLowerCase()
       && state.setup.accounts?.agent?.toLowerCase() === login.toLowerCase()
   }
@@ -116,13 +138,7 @@ export async function apply(ctx, input) {
   if (localCi) await localCi.initialize()
   automation = new Automation({ config, github, store, available, signal, localCi,
     review: context => reviewWithLlm(ctx.llm, model, context, AbortSignal.any([signal, AbortSignal.timeout(600000)])) })
-  route = ctx.webServer.register({ kind: 'exact', path: '/pr-automation/api/status', handler: (req, res) => {
-    const host = req.headers.host, port = new URL(ctx.webServer.getOrigin()).port
-    if (![ `127.0.0.1:${port}`, `localhost:${port}` ].includes(host)
-      || req.headers['x-pr-automation-request'] !== '1'
-      || req.headers.origin && req.headers.origin !== `http://${host}`) { res.writeHead(403); res.end(); return }
-    if (req.method !== 'GET') { res.writeHead(405, { Allow: 'GET' }); res.end(); return }
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
+  route = registerStatus(ctx, () => {
     const ciRuns = Object.values(store.data.ciRecords ?? {}).slice(-10).map(record => ({
       key: record.key, status: record.status, startedAt: record.startedAt, completedAt: record.completedAt,
       head: record.head, base: record.base, summary: record.summary, error: record.error, runnerImage: record.runnerImage,
@@ -130,14 +146,21 @@ export async function apply(ctx, input) {
       tasks: record.tasks.map(task => ({ identity: task.identity, workflow: task.workflow, job: task.job, matrix: task.matrix,
         passed: task.passed, exitCode: task.exitCode, reasons: task.reasons, error: task.error, logPath: task.logPath, cleanup: task.cleanup })),
     }))
-    res.end(JSON.stringify({ repository: config.repository, label: config.label, autoMerge: config.autoMerge,
+    return { repository: config.repository, label: config.label, enabled: input.enabled, autoMerge: config.autoMerge,
+      pollSeconds: input.pollSeconds, executionWindow: input.executionWindow, nextPollAt,
       ciMode: config.ciMode, ciJobs: config.localCi.jobs.map(({ workflow, job }) => ({ workflow, job })), ciRuns,
       ciRuntime: localCi ? { version: LOCAL_CI_VERSION, actVersion: localCi.actVersion, runnerImage: localCi.runnerImage, configKey: localCi.configKey } : undefined,
-      model, policy: config.policyKey, ...automation.status }))
-  } })
+      model, policy: config.policyKey, ...automation.status, execution: executionState(input) }
+  })
   const cycle = () => {
+    nextPollAt = null
     running = automation.tick().catch(error => { ctx.logger.error('PR automation: %s', String(error)) })
-      .finally(() => { if (!signal.aborted) { timer = setTimeout(cycle, config.pollSeconds * 1000); timer.unref?.() } })
+      .finally(() => {
+        if (!signal.aborted) {
+          nextPollAt = new Date(Date.now() + config.pollSeconds * 1000).toISOString()
+          timer = setTimeout(cycle, config.pollSeconds * 1000); timer.unref?.()
+        }
+      })
   }
   cycle()
   ctx.logger.info('PR 自动审核已启动：%s，标签 %s，自动合并 %s', config.repository, config.label, config.autoMerge)

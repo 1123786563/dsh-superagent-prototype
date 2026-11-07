@@ -57,7 +57,8 @@ it('serves the board with normalized query defaults, column paging, and an optio
     mandate: { strength: 'explicit', policyVersion: 'v', basis: { via: 'listed' }, actor: { source: 'github', id: 'alice' }, scope: '' } }))
   let configured = false
   const call = serve({ store: { settings: () => SettingsSchema.parse({}), tickets: { list: () => [...tickets] },
-    read: { subscribedThreads: () => [] } }, sources: { instances: () => [{ id: 'github' }], kind: () => undefined },
+    triggers: { get: () => undefined }, get: () => undefined,
+    read: { subscribedThreads: () => [] } }, sources: { instances: () => [{ id: 'github' }], instance: () => undefined, kind: () => undefined },
     links: () => () => ({ url: '', label: { zh: '', en: '' } }), configured: () => configured,
     deployment: { repository: 'org/repo' } })
   const initial = await call('GET', 'board?offset=80')

@@ -1,5 +1,26 @@
 # 验证记录
 
+## v1.2.0：可操作的配置界面（2026-11-07，Asia/Shanghai）
+
+- 新入口为 **Superagent → 设置 → PR 自动审核与合并**，提供总开关、自动合并、60–3600 秒轮询、每日时段开关、IANA 时区和原生时间输入。运行状态每 15 秒刷新，保留未保存草稿与旧 revision；具体轮询时刻按配置时区显示，避免未来时刻被相对日期函数误显示为“现在”。
+- 前端见 [pr-automation.tsx](../../src/client/pr-automation.tsx)。独立 Host 入口见 [settings.js](./settings.js)，通过 `configEditor.edit()` 保存，仅允许修改上述字段，保留其他字段及 Loader 表达式。版本检查在配置编辑器的串行回调内执行，过期版本返回 409。设置请求生命周期独立于被重启的审核插件；涉及授权开关的操作只提供用户界面，不新增可自行授予权限的 Agent 工具。
+- 设置 API 校验同源 Origin、本机 Host、专用 header、JSON 类型与请求大小；非法值、额外字段、缺失版本、持久化失败均明确返回错误。后端全量 109/109 测试通过，其中新增 11 项设置接口测试；前端 8 项表单测试覆盖保存、冲突、校验、重试、刷新基线、并发刷新和卸载取消。
+- 根仓库全量检查 1224/1224 通过。测试子进程移除继承的 `GIT_CONFIG_GLOBAL`，不更改父进程或用户的 Git 环境。随后修正轮询时刻展示，类型检查、受影响的 21 项定向回归和生产构建再次通过。完整检查日志见 [pr-automation-ui-check.log](../../.artifacts/pr-automation-ui-check.log)。
+- 安装 `@local/dsh-pr-automation@1.2.0` 返回 `application: applied`、无警告。分发清单包含设置入口及中英 locale，并为子路径导出原有原创图标。实时 Inspect 确认设置入口已挂载；插件详情中文标题、描述及两个运行中的组件已核对，根插件图标实见正确，英文资源未切换全局语言进行视觉复核。
+- 在现有 `http://127.0.0.1:3200/` 真实 GUI 中，实际将轮询从 60 保存为 120，刷新页面后仍显示 120，再通过同一表单恢复为 60。API 回读确认原始全部表单值已恢复，模型、策略、CI 模式、jobs、runner 指纹保持原值，运行状态为 ready。保存回读证据见 [ui-save-verification.json](../../.artifacts/pr-automation/ui-save-verification.json)。
+- 真实页面验证相同时刻禁用保存、22:00–06:00 跨午夜输入允许保存；时段编辑未提交，已恢复默认的未启用时间窗。原生 time 控件以原生 input 事件验证，未专项检验系统时间选择器弹层。测试未以真实发布 review 或合并 PR 作为验证手段。
+- 视觉检查覆盖 1440×1200 桌面、760×1100 窄屏及 390×1100 手机宽度。390px 时文档宽度仍为 390px，所有输入边界均位于视口内。截图：[桌面](../../.artifacts/pr-automation-ui-desktop.jpg)、[窄屏](../../.artifacts/pr-automation-ui-narrow.jpg)。浏览器视口已恢复为原始 1470×746、2 倍像素比；当前配置保持开启、60 秒、全天允许执行。未单独复核深色模式。
+
+## v1.1.0：开关、轮询与每日执行时段（2026-11-07，Asia/Shanghai）
+
+- 用户确认“执行时间”指每天允许执行的时段。新增总开关 `enabled` 和 `executionWindow`（开关、IANA 时区、开始/结束 HH:mm），保留独立的 `autoMerge`；轮询配置 `pollSeconds` 支持 60–3600 秒，每轮结束后等待，避免重叠。
+- 默认保持总开关开启、60 秒轮询、全天允许执行；09:00–22:00 仅为未启用的时段默认值。支持跨午夜，包含开始、不包含结束；启用时拒绝相同开始/结束时间，非法时间和时区不执行。
+- 关闭路径不访问 GitHub、模型或 Docker，不创建状态目录或轮询 timer，仍保留只读状态接口。窗口外不读取新 PR；模型返回、CI 启动和合并前均复核。在慢速可用性读取、最终 PR 读取或 review 去重期间越过边界，也不能据此发布/合并。
+- 已完成的 98 项插件测试通过，包含新加的 13 项执行集成用例，覆盖总开关、窗口外不启动、审核/CI/最终 PR 读取期间越界、GitHub 写入边界、CI scope 复核、关闭时无运行依赖及下次轮询时间。另用独立验证脚本完成 36/36 项边界检查：Shanghai / UTC 转换、正常与跨午夜窗口、开始/结束边界、纽约春季跳时与秋季重复小时、非法配置、无效时钟及冻结配置不被修改。检查前后 helper SHA-256 一致。证据见 [pr-execution-window-boundaries.json](../../.artifacts/pr-execution-window-boundaries.json)，脚本见 [verify-pr-execution-window.mjs](../../.artifacts/verify-pr-execution-window.mjs)。
+- 包分发 dry-run 确认包含 execution-window.js 和其余运行文件；安装 `@local/dsh-pr-automation@1.1.0` 返回 `application: applied`、warnings 为空，无需重启。
+- 实时 Config Inspect 已列出新配置字段和描述。状态接口确认 `enabled=true`、`pollSeconds=60`、`executionWindow.enabled=false`、时区 Asia/Shanghai、`execution.allowed=true`、`phase=ready`、`lastError=null`，并产生下次轮询时间。执行中的轮次 `nextPollAt` 可以为空，完成后才计算。证据见 [settings-activation-1.1.0.json](../../.artifacts/pr-automation/settings-activation-1.1.0.json)。
+- 安装前发现原实例因 Docker socket 缺失启动失败；启动现有 OrbStack 后确认 Docker 29.8.2 可用并完成上述安装与验证。测试使用模拟 GitHub/模型，不以真实发布 review 或合并来验证新开关。新配置表单的实际浏览器渲染未单独复核。
+
 ## 本地 act CI（2026-11-07，Asia/Shanghai）
 
 固定提交的实测结果（汇总多轮日志，不作为一份全绿 CI 证明）：

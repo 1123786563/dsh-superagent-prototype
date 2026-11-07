@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 // Panel search, glossary, route persistence, and host-down fallback.
 import { act } from 'react'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { en, zh } from '../src/client/locales.ts'
-import { usePanel, mount, remount, settle, all, click, type, text, field } from './fixtures/panel.tsx'
+import { usePanel, mount, remount, settle, all, at, click, find, type, text, field } from './fixtures/panel.tsx'
 import { server, found } from './fixtures/panel-server.ts'
 
 usePanel()
@@ -41,6 +41,44 @@ it('returns to the exact page after a remount of the main panel', async () => {
   await click('修复回归')
   await remount()
   expect(document.querySelector('.dt-page-title h2')?.textContent).toBe('修复回归')
+})
+
+it.each([false, true])('explains Issue closure on detail merge (retry=%s) and preserves icon-and-text actions', async retry => {
+  server.ticketDetails.t1 = { ...server.ticketDetails.t1!, actions: { retry: false, stop: true, merge: 42, mergeIssue: 7,
+    ...retry ? { mergeRetry: true as const } : {} } }
+  const fallback = globalThis.fetch
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    const response = await fallback(url, init)
+    if (!url.endsWith('/tickets/t1/merge')) return response
+    const body = JSON.parse(await response.text())
+    return Response.json({ ...body, closedIssue: 7 })
+  })
+  at({ page: 'execution', id: 't1' })
+  await mount()
+  const label = retry ? zh.mergePullRetry : zh.mergePull
+  const button = find(label, '.dt-page-title button')
+  expect(button.textContent).toBe(label)
+  expect(button.querySelector('svg')).not.toBeNull()
+  await click(button)
+  const dialog = document.querySelector('.dt-modal-root')!
+  for (const value of ['PR #42', 'Issue #7', 'acme/widgets', '修复回归']) expect(dialog.textContent).toContain(value)
+  if (retry) expect(dialog.textContent).toContain('只补关 Issue，不会重复合并')
+  expect(server.requests.some(request => request.path === 'tickets/t1/merge')).toBe(false)
+  await click(zh.confirm)
+  expect(document.querySelector('.dt-toast')?.textContent).toBe('PR #42 已合并，Issue #7 已关闭')
+  expect(server.requests.filter(request => request.path === 'tickets/t1/merge')).toHaveLength(1)
+  expect(server.requests.filter(request => request.path === 'tickets/t1')).toHaveLength(2)
+})
+
+it('keeps the original merge confirmation without an Issue and reports only the returned merge result', async () => {
+  server.ticketDetails.t1 = { ...server.ticketDetails.t1!, actions: { retry: false, stop: true, merge: 42 } }
+  at({ page: 'execution', id: 't1' })
+  await mount()
+  await click(find(zh.mergePull, '.dt-page-title button'))
+  expect(document.querySelector('.dt-modal-description')?.textContent).toBe(
+    '将把 acme/widgets 的 PR #42（“修复回归”）立即合并到默认分支。此操作会改变 GitHub 仓库。')
+  await click(zh.confirm)
+  expect(document.querySelector('.dt-toast')?.textContent).toBe('PR #42 已合并')
 })
 
 it('shows domain terms in the interface language only and lists both languages in the (?) glossary', async () => {

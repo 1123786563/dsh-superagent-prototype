@@ -7,7 +7,7 @@ import { ticketMark } from './marks.ts'
 import { useAction, usePanel, usePanelData } from './provider.tsx'
 import type { BoardRouteQuery, Route } from './route.ts'
 import { ThreadChip } from './rows.tsx'
-import { TicketPage } from './ticket.tsx'
+import { MergePullButton, TicketPage } from './ticket.tsx'
 import { localized, readableMarkers } from './text.ts'
 import { ConfirmButton, LoadState, SessionButton, StageMark, When } from './widgets.tsx'
 
@@ -70,9 +70,8 @@ function TicketCard({ ticket, repository, selected, onOpen, onChanged, list = fa
         {ticket.actions.retry && <ConfirmButton iconOnly icon="refresh" label={t('retry')} title={t('retryTitle')}
           message={t('retryConfirm', { title: ticket.title })}
           onConfirm={async () => { await call('POST tickets/:id/retry', { id: ticket.id }); await onChanged() }} />}
-        {ticket.actions.merge && <ConfirmButton iconOnly icon="pull" label={t('mergePull')} title={t('mergePullTitle')}
-          message={t('mergePullConfirm', { number: ticket.actions.merge, repository: repository ?? t('board.repository'), title: ticket.title })}
-          onConfirm={async () => { await call('POST tickets/:id/merge', { id: ticket.id }); await onChanged() }} />}
+        {ticket.actions.merge && <MergePullButton iconOnly id={ticket.id} title={ticket.title} number={ticket.actions.merge}
+          issue={ticket.actions.mergeIssue} retry={ticket.actions.mergeRetry} repository={repository} onChanged={onChanged} />}
         {ticket.sessionId && <SessionButton iconOnly sessionId={ticket.sessionId} />}
       </div>}</div>
   </li>

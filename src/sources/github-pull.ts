@@ -1,6 +1,6 @@
 /** Pull request binding, lifecycle observation, and terminal IM notification helpers. */
 import { z } from 'zod'
-import { key, liveTicket, type Follow, type OutboundMessage, type ThreadFact, type Ticket } from '../core/index.ts'
+import { key, liveTicket, type Follow, type OutboundMessage, type ThreadFact, type Ticket, type Trigger } from '../core/index.ts'
 import type { Deployment } from '../deployment.ts'
 import { sameName } from '../infra/text.ts'
 import type { SourceContext } from './host.ts'
@@ -17,6 +17,16 @@ export type Pull = z.infer<typeof PullSchema> & { number: number }
 export const PullMergeStateSchema = z.object({ state: z.string(), merged: z.boolean(), draft: z.boolean(),
   mergeable: z.boolean().nullable(), mergeable_state: z.string(), head: z.object({ sha: z.string() }) })
 export const PullMergeResultSchema = z.object({ merged: z.boolean(), message: z.string().optional() })
+export const IssueCloseStateSchema = z.object({ number: z.number().int().positive(), state: z.enum(['open', 'closed']), pull_request: z.unknown().optional() })
+/** Result of a user-confirmed merge and, when applicable, closure of its originating Issue. */
+export interface TicketMergeResult { merged: true; number: number; closedIssue?: number }
+/** Only the originating GitHub Issue is eligible for closure; context Threads and origin PRs are excluded. */
+export function issueOf(trigger: Trigger | undefined): number | undefined {
+  const number = trigger?.meta.number
+  return trigger?.source === 'github' && trigger.meta.isPr === false && typeof number === 'number'
+    && Number.isSafeInteger(number) && number > 0 && trigger.threads.some(ref => ref.source === 'github' && ref.id === String(number))
+    ? number : undefined
+}
 /**
  * Represents a refused PR merge: eligibility, existence, or GitHub's own conflict status failed the fresh pre-merge check,
  * and registerHttp serializes its message as the panel's 409 response.

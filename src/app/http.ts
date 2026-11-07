@@ -21,7 +21,7 @@ import type { DshExecutor } from '../executor/dsh.ts'
 import type { Health } from '../sources/host.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import type { Sessions } from './sessions.ts'
-import { PullMergeError } from '../sources/github-pull.ts'
+import { PullMergeError, type TicketMergeResult } from '../sources/github-pull.ts'
 import type { Store } from './store.ts'
 import type { TextCache } from './cache.ts'
 import type { LinkTarget, ViewHost } from './views/records.ts'
@@ -60,7 +60,7 @@ export interface HttpHost {
   requestPass(): void
   models(): Promise<ModelCatalog>
   /** Performs the confirmed, user-only PR merge for an open Ticket after checking GitHub's current merge state. */
-  mergeTicket(id: string): Promise<{ merged: true; number: number }>
+  mergeTicket(id: string): Promise<TicketMergeResult>
 }
 /**
  * Represents a client-facing 400, 404, or 409 error raised during management route parsing, lookup, or conflict handling.

@@ -109,6 +109,23 @@ function EmbeddedHead({ title, children }: { title: ReactNode; children?: ReactN
   return <div className="dt-page-title"><h2>{title}</h2>{children && <span className="dt-actions">{children}</span>}</div>
 }
 
+/** Shared confirmation and result feedback for board-card and detail merge actions. */
+export function MergePullButton({ id, title, number, issue, retry, repository, iconOnly = false, onChanged }: {
+  id: string; title: string; number: number; issue?: number | undefined; retry?: boolean | undefined
+  repository?: string | undefined; iconOnly?: boolean; onChanged: () => Promise<unknown>
+}) {
+  const { t, call, notify } = usePanel()
+  const values = { number, issue, repository: repository ?? t('board.repository'), title }
+  return <ConfirmButton variant={iconOnly ? 'ghost' : 'outline'} icon="pull" iconOnly={iconOnly}
+    label={t(retry ? 'mergePullRetry' : 'mergePull')} title={t(retry ? 'mergePullRetry' : 'mergePullTitle')}
+    message={t(issue ? retry ? 'mergePullRetryConfirm' : 'mergePullCloseConfirm' : 'mergePullConfirm', values)}
+    onConfirm={async () => {
+      const result = await call('POST tickets/:id/merge', { id })
+      notify(t(result.closedIssue ? 'mergePullClosed' : 'mergePullDone', { number: result.number, issue: result.closedIssue }))
+      await onChanged()
+    }} />
+}
+
 export function TicketPage({ id, embedded = false, onChanged }: { id: string; embedded?: boolean; onChanged?: () => Promise<unknown> }) {
   const { t, call } = usePanel()
   const { setup } = usePanelData()
@@ -137,9 +154,9 @@ export function TicketPage({ id, embedded = false, onChanged }: { id: string; em
       {data.actions.retry && <ConfirmButton variant="outline" icon="refresh" label={t('retry')} title={t('retryTitle')}
         message={t('retryConfirm', { title: data.title })}
         onConfirm={() => after(call('POST tickets/:id/retry', { id }))} />}
-      {data.actions.merge && <ConfirmButton variant="outline" icon="pull" label={t('mergePull')} title={t('mergePullTitle')}
-        message={t('mergePullConfirm', { number: data.actions.merge, repository: setup?.accounts?.repository ?? t('board.repository'), title: data.title })}
-        onConfirm={() => after(call('POST tickets/:id/merge', { id }))} />}
+      {data.actions.merge && <MergePullButton id={id} title={data.title} number={data.actions.merge} issue={data.actions.mergeIssue}
+        retry={data.actions.mergeRetry} repository={setup?.accounts?.repository}
+        onChanged={async () => { await reload(); await onChanged?.() }} />}
       {data.sessionId && <SessionButton variant="outline" sessionId={data.sessionId} />}
     </Heading>
     {error && <LoadState error={error} loading={false} />}

@@ -6,7 +6,7 @@ import type { T } from './text.ts'
 
 export const TABS = ['board', 'overview', 'source', 'trigger', 'eval', 'execution', 'settings'] as const
 export type Tab = typeof TABS[number]
-export const SETTINGS_GROUPS = ['source', 'eval', 'execution', 'prompts', 'deployment', 'connectors'] as const
+export const SETTINGS_GROUPS = ['source', 'eval', 'execution', 'prompts', 'deployment', 'connectors', 'pr-automation'] as const
 export type SettingsGroup = typeof SETTINGS_GROUPS[number]
 export interface BoardRouteQuery { q?: string; source?: string; order?: 'updated' | 'created' | 'oldest'; view?: 'board' | 'list' }
 export type Route = { page: 'board'; id?: string; query?: BoardRouteQuery }

@@ -34,7 +34,7 @@ import { registerHttp, type HttpHost } from './http.ts'
 import type { LinkTarget } from './views/records.ts'
 import { candidateCard, repliedTo, sourceLink, type LinkHost } from './links.ts'
 import { eventNotice, followupNotice } from './notices.ts'
-import { pullEndNotices, pullOf, PullMergeError, PullMergeResultSchema, PullMergeStateSchema } from '../sources/github-pull.ts'
+import { pullEndNotices, pullOf, issueOf, IssueCloseStateSchema, PullMergeError, PullMergeResultSchema, PullMergeStateSchema, type TicketMergeResult } from '../sources/github-pull.ts'
 import { HealthBoard } from '../infra/health.ts'
 import { Outbox } from './outbox.ts'
 import { Passes } from './passes.ts'
@@ -78,6 +78,7 @@ export class Runtime extends Service implements SourceHost {
   private readonly sourceLinks = new TextCache(200_000)
   private readonly stopped = new AbortController()
   private readonly disposers: (() => void)[] = []
+  private readonly merges = new Map<string, Promise<TicketMergeResult>>()
   private releaseLock?: () => Promise<void>
   private closingFlag = false
   private stopping?: Promise<void>
@@ -186,17 +187,33 @@ export class Runtime extends Service implements SourceHost {
     const links = resolved ? { repository: resolved.repository, ...(resolved.feishu ? { feishu: resolved.feishu } : {}) } : {}
     return channel => this.sources.link(channel, links)
   }
-  /** Merges the current, explicitly followed GitHub PR after rechecking GitHub's merge state and head SHA. This remains a user-only panel action. */
-  async mergeTicket(ticketId: string): Promise<{ merged: true; number: number }> {
+  /** User-only merge completion; concurrent clicks share one operation, including its Issue closure. */
+  mergeTicket(ticketId: string): Promise<TicketMergeResult> {
+    const running = this.merges.get(ticketId)
+    if (running) return running
+    const operation = this.completeMerge(ticketId).finally(() => { this.merges.delete(ticketId) })
+    this.merges.set(ticketId, operation)
+    return operation
+  }
+  private async completeMerge(ticketId: string): Promise<TicketMergeResult> {
     if (!this.setup.configured()) throw new PullMergeError('GitHub setup is not ready')
-    const instance = this.sources.instance('github')
-    if (!instance?.enabled) throw new PullMergeError('The GitHub Source is disabled')
+    if (this.closing()) throw new PullMergeError('Superagent is stopping')
+    if (!this.sources.instance('github')?.enabled) throw new PullMergeError('The GitHub Source is disabled')
+    const checkpoint = KV.runtime.issueClosure(ticketId), pending = this.store.get(checkpoint)
     const ticket = this.store.tickets.get(ticketId)
-    if (!ticket || ticket.ended) throw new PullMergeError('Ticket is not open')
-    const number = pullOf(ticket)
-    const follow = number && ticket.follows?.find(item => !item.closed && item.thread === `github:${number}`)
+    if (!ticket || ticket.ended && !pending) throw new PullMergeError('Ticket is not open')
+    const origin = sourceTrigger(this, ticket), issue = issueOf(origin), repository = this.deployment.repository
+    if (pending && (pending.repository !== repository || pending.issue !== issue)) throw new PullMergeError('Pending Issue closure does not match this repository or Ticket')
+    if (issue && origin?.url) {
+      const url = new URL(origin.url)
+      if (url.hostname !== 'github.com' || url.pathname.toLowerCase() !== `/${repository}/issues/${issue}`.toLowerCase()) {
+        throw new PullMergeError('The originating Issue belongs to a different repository')
+      }
+    }
+    const number = pending?.pull ?? pullOf(ticket)
+    const follow = number && ticket.follows?.find(item => (pending || !item.closed) && item.thread === `github:${number}`)
     const thread = follow && this.store.threads.get(follow.thread)
-    if (!Number.isSafeInteger(number) || number! <= 0 || !thread || thread.meta.isPr !== true) {
+    if (!number || !Number.isSafeInteger(number) || number <= 0 || !thread || thread.meta.isPr !== true) {
       throw new PullMergeError('Ticket has no open GitHub pull request')
     }
     let pr: ReturnType<typeof PullMergeStateSchema.parse>
@@ -205,23 +222,43 @@ export class Runtime extends Service implements SourceHost {
       if (error instanceof CliError && error.code === 404) throw new PullMergeError(`PR #${number} no longer exists or is inaccessible`)
       throw error
     }
-    if (pr.state !== 'open' || pr.merged || pr.draft || pr.mergeable !== true
-      || (pr.mergeable_state !== 'clean' && pr.mergeable_state !== 'unstable')) {
-      throw new PullMergeError(`PR #${number} is no longer ready to merge. Refresh the board and try again.`)
-    }
-    let result: ReturnType<typeof PullMergeResultSchema.parse>
-    try {
-      result = PullMergeResultSchema.parse(JSON.parse(await this.commands.api(`pulls/${number}/merge`, '-X', 'PUT', '-f', `sha=${pr.head.sha}`,
-        '-f', 'merge_method=merge')) as unknown)
-    } catch (error) {
-      if (error instanceof CliError && (error.code === 405 || error.code === 409)) {
-        throw new PullMergeError(`PR #${number} changed or is blocked from merging. Refresh the board and try again.`)
+    if (!pr.merged) {
+      if (pr.state !== 'open' || pr.draft || pr.mergeable !== true
+        || (pr.mergeable_state !== 'clean' && pr.mergeable_state !== 'unstable')) {
+        if (pr.state !== 'open') this.store.delete(checkpoint)
+        throw new PullMergeError(`PR #${number} is no longer ready to merge. Refresh the board and try again.`)
       }
-      throw error
+      // Journal intent before the remote write: a lost response or restart must not lose the Issue completion.
+      if (issue) this.store.set(checkpoint, { repository, pull: number, issue })
+      let result: ReturnType<typeof PullMergeResultSchema.parse>
+      try {
+        result = PullMergeResultSchema.parse(JSON.parse(await this.commands.api(`pulls/${number}/merge`, '-X', 'PUT', '-f', `sha=${pr.head.sha}`,
+          '-f', 'merge_method=merge')) as unknown)
+      } catch (error) {
+        if (error instanceof CliError && (error.code === 405 || error.code === 409)) {
+          this.store.delete(checkpoint)
+          throw new PullMergeError(`PR #${number} changed or is blocked from merging. Refresh the board and try again.`)
+        }
+        throw error
+      }
+      if (!result.merged) { this.store.delete(checkpoint); throw new PullMergeError(result.message ?? `GitHub did not merge PR #${number}`) }
     }
-    if (!result.merged) throw new PullMergeError(result.message ?? `GitHub did not merge PR #${number}`)
-    this.engine.threadClosed({ source: 'github', id: String(number) }, 'merged', now())
-    return { merged: true, number }
+    if (issue) {
+      this.store.set(checkpoint, { repository, pull: number, issue })
+      try {
+        let state = await this.commands.api(IssueCloseStateSchema, `issues/${issue}`)
+        if (state.number !== issue || state.pull_request != null) throw new Error('Origin is not the expected Issue')
+        if (state.state !== 'closed') state = await this.commands.api(IssueCloseStateSchema, `issues/${issue}`, '-X', 'PATCH', '-f', 'state=closed', '-f', 'state_reason=completed')
+        if (state.number !== issue || state.pull_request != null || state.state !== 'closed') throw new Error('GitHub did not confirm Issue closure')
+      } catch {
+        throw new PullMergeError(`PR #${number} 已合并，但 Issue #${issue} 关闭失败。请重试完成操作，已合并的 PR 不会重复合并。`)
+      }
+    }
+    this.store.atomic(() => {
+      this.engine.threadClosed({ source: 'github', id: String(number) }, 'merged', now())
+      this.store.delete(checkpoint)
+    })
+    return { merged: true, number, ...issue ? { closedIssue: issue } : {} }
   }
   ticketEnvironment(ticket: Ticket): Variable[] {
     const trigger = sourceTrigger(this, ticket)
@@ -274,7 +311,7 @@ export class Runtime extends Service implements SourceHost {
       const ids = [this.masterId, ...this.store.tickets.list().map(ticket => workerSessionId(ticket.id))]
       const agents = ids.map(id => this.ctx.agents.get(id as SessionId)).filter((agent): agent is Agent => agent !== undefined)
       for (const agent of agents) agent.cancel({ kind: 'user' }, { keepInbox: true })
-      await Promise.allSettled([passes, this.effects.drain(), ...agents.map(agent => agent.whenIdle())])
+      await Promise.allSettled([passes, this.effects.drain(), ...this.merges.values(), ...agents.map(agent => agent.whenIdle())])
       // The workers' jobs and subagents stop too: their ends would start worker turns without the tool limits released below.
       await this.executor.shutdown()
       this.executor.dispose()

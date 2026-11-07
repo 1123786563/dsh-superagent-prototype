@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { executionState } from './execution-window.js'
 
 export class Github {
   constructor(config, signal) { this.config = config; this.signal = signal }
@@ -122,11 +123,14 @@ export class Github {
     const verdict = record.verdict
     const findings = verdict.findings.map(item => `- **${item.severity}** \`${item.path}:${item.line}\` — ${item.message}`).join('\n')
     const body = `This is by an automated agent, not a human.\n\n自动审核：**${verdict.decision}**\n\n${verdict.summary}\n\n${findings}\n\n审核 head: \`${pr.head.sha}\`\n审核 base: \`${pr.base.sha}\`\n${verdict.requiresHumanReview ? '需要人工确认。\n' : ''}自动审核通过后仍须满足 CI、讨论与仓库保护规则。此审核不代替仓库要求的人工批准。\n\n${marker}`
+    // Review deduplication above may take long enough to cross the daily window.
+    if (!executionState(this.config).allowed) throw new Error('PR 自动审核已关闭或当前不在允许执行的时间段')
     // COMMENT works on agent-authored PRs too, without impersonating an independent GitHub approval.
     const result = await this.api(this.repo(`pulls/${pr.number}/reviews`), { commit_id: pr.head.sha, event: 'COMMENT', body })
     return result.id
   }
   merge(pr) {
+    if (!executionState(this.config).allowed) throw new Error('PR 自动审核已关闭或当前不在允许执行的时间段')
     return this.api(this.repo(`pulls/${pr.number}/merge`), { sha: pr.head.sha, merge_method: this.config.mergeMethod }, 'PUT')
   }
 }

@@ -15,10 +15,16 @@ export class Automation {
     this.status = { phase: 'starting', lastPoll: null, lastError: null, pulls: {} }
   }
   async canRun() {
-    const execution = executionState(this.config, new Date(this.now()))
-    this.status.execution = execution
-    if (!execution.allowed) { this.status.phase = execution.reason; return false }
-    return this.available()
+    const current = () => {
+      const execution = executionState(this.config, new Date(this.now()))
+      this.status.execution = execution
+      if (!execution.allowed) this.status.phase = execution.reason
+      return execution.allowed
+    }
+    if (!current()) return false
+    if (!await this.available()) return false
+    // Availability may itself involve slow network reads across the boundary.
+    return current()
   }
   async tick() {
     if (this.busy) return
@@ -50,6 +56,7 @@ export class Automation {
     finally { this.busy = false }
   }
   async process(pr) {
+    if (!await this.canRun()) { this.status.pulls[pr.number] = { state: 'paused', head: pr.head.sha }; return }
     const key = revisionKey(pr), storeKey = `${key}:${this.config.policyKey}`
     let record = this.store.data.records[storeKey]
     this.status.pulls[pr.number] = { state: 'reviewing', head: pr.head.sha, base: pr.base.sha }
@@ -102,7 +109,10 @@ export class Automation {
     // A slow final PR read may cross the configured boundary after canRun resolved.
     const execution = executionState(this.config, new Date(this.now()))
     this.status.execution = execution
-    if (!execution.allowed) reasons.push(execution.reason === 'disabled' ? 'PR 自动审核总开关已关闭' : '当前不在允许执行的时间段')
+    if (!execution.allowed) {
+      this.status.phase = execution.reason
+      reasons.push(execution.reason === 'disabled' ? 'PR 自动审核总开关已关闭' : '当前不在允许执行的时间段')
+    }
     if (reasons.length) {
       this.status.pulls[pr.number] = { state: 'waiting', head: fresh.head.sha, reviewId: record.reviewId, reasons }; return
     }

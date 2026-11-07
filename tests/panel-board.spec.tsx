@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Work board integration through the panel and management API.
 import { act } from 'react'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { en } from '../src/client/locales.ts'
 import { HOME, initialLocation } from '../src/client/route.ts'
 import { all, at, click, field, find, mount, remount, settle, tab, text, type, usePanel } from './fixtures/panel.tsx'
@@ -158,6 +158,59 @@ it('confirms a PR merge with its repository and number, then refreshes without o
   await click(en.confirm)
   expect(server.requests.filter(request => request.path === 'tickets/t1/merge')).toEqual([{ path: 'tickets/t1/merge', method: 'POST' }])
   expect(boardRequests().length).toBeGreaterThan(1)
+  expect(document.querySelector('.dt-board-drawer')).toBeNull()
+})
+
+it('confirms closing the originating Issue, keeps the card icon-only, and reports the returned close result', async () => {
+  server.tickets.open = [ticketSummary({ actions: { retry: false, stop: true, merge: 42, mergeIssue: 7 } })]
+  const fallback = globalThis.fetch
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    const response = await fallback(url, init)
+    if (!url.endsWith('/tickets/t1/merge')) return response
+    const body = JSON.parse(await response.text())
+    return Response.json({ ...body, closedIssue: 7 })
+  })
+  await board()
+  const merge = find(en.mergePull, '.dt-board-ticket-actions button')
+  expect(merge.textContent).toBe('')
+  expect(merge.querySelector('svg')).not.toBeNull()
+  await click(merge)
+  const dialog = document.querySelector('.dt-modal-root')!
+  for (const value of ['PR #42', 'Issue #7', 'acme/widgets', '修复回归']) expect(dialog.textContent).toContain(value)
+  expect(server.requests.some(request => request.path === 'tickets/t1/merge')).toBe(false)
+  await click(en.cancel)
+  expect(server.requests.some(request => request.path === 'tickets/t1/merge')).toBe(false)
+  await click(merge)
+  await click(en.confirm)
+  expect(document.querySelector('.dt-toast')?.textContent).toBe('PR #42 merged; Issue #7 closed')
+  expect(server.requests.filter(request => request.path === 'tickets/t1/merge')).toHaveLength(1)
+  expect(document.querySelector('.dt-board-drawer')).toBeNull()
+})
+
+it('explains safe merge completion retry and keeps the confirmation open when closing fails', async () => {
+  server.tickets.open = [ticketSummary({ actions: { retry: false, stop: true, merge: 42, mergeIssue: 7, mergeRetry: true } })]
+  let fail = true
+  const fallback = globalThis.fetch
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    const response = await fallback(url, init)
+    if (!url.endsWith('/tickets/t1/merge')) return response
+    const body = JSON.parse(await response.text())
+    return fail ? Response.json({ error: 'Issue close failed; retry completion' }, { status: 503 })
+      : Response.json({ ...body, closedIssue: 7 })
+  })
+  await board()
+  const retry = find(en.mergePullRetry, '.dt-board-ticket-actions button')
+  expect(retry.textContent).toBe('')
+  await click(retry)
+  expect(document.querySelector('.dt-modal-root')?.textContent).toContain('only close the Issue; the PR will not be merged again')
+  await click(en.confirm)
+  expect(document.querySelector('.dt-modal-root')).not.toBeNull()
+  expect(document.querySelector('.dt-toast')?.textContent).not.toContain('Issue #7 closed')
+  fail = false
+  await click(en.confirm)
+  expect(document.querySelector('.dt-modal-root')).toBeNull()
+  expect(document.querySelector('.dt-toast')?.textContent).toBe('PR #42 merged; Issue #7 closed')
+  expect(server.requests.filter(request => request.path === 'tickets/t1/merge')).toHaveLength(2)
   expect(document.querySelector('.dt-board-drawer')).toBeNull()
 })
 

@@ -5,6 +5,7 @@
         "id": "dsh-pr-automation",
         "name": "@local/dsh-pr-automation",
         "config": {
+          "enabled": true,
           "repository": "1123786563/OpenBot",
           "cli": "/Users/wuyongjun/.local/bin/gh-agent",
           "baseBranch": "main",
@@ -12,6 +13,12 @@
           "autoMerge": true,
           "mergeMethod": "merge",
           "pollSeconds": 60,
+          "executionWindow": {
+            "enabled": false,
+            "timeZone": "Asia/Shanghai",
+            "start": "09:00",
+            "end": "22:00"
+          },
           "maxChangedLines": 500,
           "maxContextChars": 180000,
           "stateDir": "/Users/wuyongjun/trea/dsh-superagent-prototype/.artifacts/pr-automation",
@@ -44,6 +51,11 @@
             ]
           }
         }
+      },
+      {
+        "id": "dsh-pr-automation-settings",
+        "name": "@local/dsh-pr-automation/settings",
+        "config": { "entryId": "dsh-pr-automation" }
       }
     ]
   }
