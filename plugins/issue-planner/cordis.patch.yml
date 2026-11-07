@@ -1,0 +1,11 @@
+- insert:
+    - id: issue-planner
+      name: '@local/dsh-issue-planner'
+      config:
+        enabled: false
+        repository: ''
+        plannerCli: ''
+        executorLogin: wuyj-agent
+        sourceDirectory: ''
+        skillsDirectory: ''
+        pollSeconds: 300

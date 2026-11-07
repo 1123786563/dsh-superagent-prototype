@@ -34,6 +34,10 @@ Read the numbered documents in order; each builds only on the ones before it.
 
 [PR review and merge plugin](plugins/pr-automation/README.md) adds independent review for labeled pull requests and merges only after revision, CI, discussion, and repository gates pass. It installs as a separate DSH bundle and follows the existing Superagent's pause and GitHub Source settings.
 
+## Optional issue planning
+
+[Issue planning plugin](plugins/issue-planner/README.md) scans open issues from their root context, selects one ready and unblocked task per cycle, writes a superpowers implementation plan, and hands it to the existing executor through an independent GitHub account. It includes repository locking and durable publication deduplication, and installs with automation disabled.
+
 ## Corsair external connector
 
 [Configure Corsair](docs/corsair-connector.md) to give Worker Sessions access to applications connected to a Corsair link through MCP. A reusable standalone DSH bundle is in [plugins/corsair](plugins/corsair/README.md).
