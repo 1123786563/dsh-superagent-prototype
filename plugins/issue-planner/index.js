@@ -21,6 +21,9 @@ export const Config=s.object({
  planTimeoutSeconds:s.number().min(60).max(3600).step(1).default(1200),
  maxContextChars:s.number().min(10000).max(500000).step(1).default(180000),
  maxAttempts:s.number().min(1).max(10).step(1).default(3),
+ reconcileSeconds:s.number().min(60).max(3600).step(1).default(300).description('单张评论回执不确定时的对账间隔；隔离该 issue，其余继续。'),
+ handoffTimeoutMinutes:s.number().min(1).max(1440).step(1).default(30).description('评论确认后，未观察到执行工单多久标记异常；分钟。'),
+ executionStallHours:s.number().min(1).max(168).step(1).default(24).description('工单多久无权威进展时标记疑似停滞；小时，不自动重派或停止 worker。'),
  readyLabels:s.array(s.string()).default(['ready-for-agent']),
  blockedLabels:s.array(s.string()).default(['blocked','on-hold']),
  superagentOrigin:s.string().default('http://127.0.0.1:3200'),
@@ -40,7 +43,7 @@ export async function apply(ctx,input){
   res.writeHead(200,{'content-type':'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'})
   res.end(JSON.stringify({schemaVersion:1,enabled:input.enabled,repository:input.repository,plannerLogin:login??null,executorLogin:input.executorLogin,nextPollAt,...current,
    skipped:current.skipped?.slice(offset,offset+limit),skippedTotal:current.skipped?.length??0,
-   records:{total:records.length,offset,items:records.slice(offset,offset+limit).map(({number,state,commentId,commentUrl,sessionId,error,ticketId})=>({number,state,commentId,commentUrl,sessionId,error,ticketId}))}}))
+   records:{total:records.length,offset,items:records.slice(offset,offset+limit).map(({number,state,commentId,commentUrl,sessionId,error,ticketId,attempts,retryAt,reconcileAfter,executionStatus,lastProgressAt,attentionReason,quarantinedAt,handedOffAt,lastReconciledAt,attemptStartedAt})=>({number,state,commentId,commentUrl,sessionId,error,ticketId,attempts,retryAt,reconcileAfter,executionStatus,lastProgressAt,attentionReason,quarantinedAt,handedOffAt,lastReconciledAt,attemptStartedAt}))}}))
  }})
  ctx.effect(()=>async()=>{controller.abort();clearTimeout(timer);statusRoute();await running;for(const release of releases.reverse())release();await store?.close()})
  if(!input.enabled)return
@@ -71,7 +74,7 @@ export async function apply(ctx,input){
    if(currentUser.login.toLowerCase()!==login.toLowerCase())throw new Error('planner account changed')
    admissionReady(state,settings,currentUser,input)
    const inventory=await ticketInventory(get,input.repository)
-   for(const record of Object.values(store.data.records))if(record.state==='handed_off'&&inventory.byNumber.has(record.number))record.ticketId=inventory.byNumber.get(record.number)
+   // Ticket observations are persisted by the serial engine, not the planning monitor.
    return inventory
   }
   engine=new Engine({github,store,config,available,signal,plan:request=>runWhileAvailable(planSignal=>planIssue(ctx,input,skills,github,store,{...request,signal:planSignal}),available,signal)})

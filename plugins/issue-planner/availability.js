@@ -27,7 +27,7 @@ export async function runWhileAvailable(operation,check,parent,interval=15000){
  try{return await operation(signal)}finally{stopped=true;clearTimeout(timer);controller.abort();await pending}
 }
 export async function ticketInventory(get,repository){
- const busyNumbers=new Set(),byNumber=new Map()
+ const busyNumbers=new Set(),byNumber=new Map(),ticketByNumber=new Map()
  let offset=0,total
  for(let page=0;page<100;page++){
   const data=await get(`tickets?state=open&offset=${offset}&limit=100`)
@@ -39,12 +39,12 @@ export async function ticketInventory(get,repository){
    for(const thread of ticket.threads){
     const match=/^https:\/\/github\.com\/([^/]+\/[^/]+)\/(?:issues|pull)\/(\d+)/.exec(thread.url??'')
     if(match&&match[1].toLowerCase()===repository.toLowerCase()){
-     const number=Number(match[2]);busyNumbers.add(number);byNumber.set(number,ticket.id)
+     const number=Number(match[2]);busyNumbers.add(number);byNumber.set(number,ticket.id);ticketByNumber.set(number,ticket)
     }else if(thread.source==='github')throw new Error('GitHub ticket has no verifiable repository link')
    }
   }
   offset+=data.items.length
-  if(offset===total)return {busyNumbers,byNumber}
+  if(offset===total)return {busyNumbers,byNumber,ticketByNumber}
   if(!data.items.length||offset>total)break
  }
  throw new Error('ticket pagination incomplete')

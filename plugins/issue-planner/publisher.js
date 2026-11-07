@@ -15,7 +15,7 @@ export async function publish({github,store,config,record,available,revalidate=a
  }
  record.receipts??={}
  const confirmed=record.receipts.handoff??await find('handoff')
- if(confirmed){record.commentId=confirmed.id;record.commentUrl=confirmed.html_url;record.state='handed_off';await store.save();return}
+ if(confirmed){record.commentId=confirmed.id;record.commentUrl=confirmed.html_url;record.handedOffAt??=confirmed.created_at??record.pending?.at??new Date().toISOString();record.pending=null;record.attentionReason=null;record.state='handed_off';await store.save();return}
  const text=record.text,parts=[]
  if(text.length>48000)for(let offset=0;offset<text.length;offset+=48000)parts.push(text.slice(offset,offset+48000))
  record.parts??=[]
@@ -30,7 +30,7 @@ export async function publish({github,store,config,record,available,revalidate=a
    await assertAllowed()
    const receipt=await github.postComment(record.number,body)
    if(!receipt?.id||!receipt.html_url)throw new Error('missing GitHub comment receipt')
-   store.assertHeld();record.receipts[part]={id:receipt.id,html_url:receipt.html_url};record.pending=null;await store.save();return receipt
+   store.assertHeld();record.receipts[part]={id:receipt.id,html_url:receipt.html_url,created_at:receipt.created_at??new Date().toISOString()};record.pending=null;await store.save();return receipt
   }catch(error){record.state='publish_uncertain';record.error=error.message;await store.save();return null}
  }
  for(let i=0;i<parts.length;i++){

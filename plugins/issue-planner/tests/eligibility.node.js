@@ -9,6 +9,10 @@ test('root trackers are context; leaf ordering is stable and root-first', () => 
  assert.deepEqual(evaluate(s,config).candidates.map(i=>i.number),[2,3])
  assert.deepEqual(contextFor(s,3).map(i=>i.number),[1,3])
 })
+test('smallest eligible issue number wins even when creation timestamps disagree',()=>{
+ const s=snapshot(issue(20,{created_at:'2020-01-01'}),issue(3,{created_at:'2026-01-01'}),issue(1,{labels:[{name:'blocked'}]}))
+ assert.deepEqual(evaluate(s,config).candidates.map(i=>i.number),[3,20])
+})
 test('every dependency heading contributes blockers, including later Depends on sections',()=>{
  const s=snapshot(issue(1,{body:'## Blocked by\nNone\n\n## Depends on\n#2'}),issue(2))
  assert.deepEqual(evaluate(s,config).candidates.map(i=>i.number),[2])

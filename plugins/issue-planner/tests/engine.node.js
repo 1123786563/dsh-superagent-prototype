@@ -12,6 +12,12 @@ function fixture(){
  const engine=new Engine({github,store,config,available,plan:async()=>{plans++;return{text:'implementation plan',commit:'a'.repeat(40),sessionId:'session'}}})
  return{engine,github,store,config,posts,comments,available,issues,get plans(){return plans},pause(){allowed=false}}
 }
+test('blocked implementation is observed without reassigning it or blocking the next issue',async()=>{
+ const f=fixture();f.store.data.records.I1={number:1,state:'handed_off',handedOffAt:new Date().toISOString()}
+ f.engine.available=async()=>({busyNumbers:new Set([1]),ticketByNumber:new Map([[1,{id:'t1',stage:'person',action:'blocked',updatedAt:new Date().toISOString()}]])})
+ await f.engine.tick()
+ assert.equal(f.store.data.records.I1.executionStatus,'execution_blocked');assert.equal(f.store.data.records.I1.state,'handed_off');assert.equal(f.store.data.records.I2.state,'handed_off');assert.equal(f.plans,1)
+})
 test('each tick plans one issue and handed-off issues are never replanned',async()=>{
  const f=fixture();await f.engine.tick();assert.equal(f.plans,1);assert.equal(f.posts.length,1)
  await f.engine.tick();assert.equal(f.plans,2);assert.equal(f.posts.length,2)
@@ -20,8 +26,44 @@ test('each tick plans one issue and handed-off issues are never replanned',async
 test('ambiguous POST is reconciled, never automatically resent after restart',async()=>{
  const f=fixture();f.github.postComment=async()=>{throw new Error('timeout')}
  await f.engine.tick();assert.equal(f.store.data.records.I1.state,'publish_uncertain')
- f.engine=new Engine({...f.engine});await f.engine.tick();assert.equal(f.plans,1)
+ f.store.data.records.I1.reconcileAfter=0
+ f.engine=new Engine({...f.engine});await f.engine.tick();assert.equal(f.plans,2)
  assert.equal(f.store.data.records.I1.state,'publish_uncertain')
+})
+test('uncertain issue is quarantined while later eligible issues continue without resending it',async()=>{
+ const f=fixture();let attempts=0
+ f.github.postComment=async(number,body)=>{attempts++;if(number===1)throw new Error('timeout');f.posts.push(body);return{id:2,html_url:'https://github.com/o/r/issues/2#issuecomment-2'}}
+ await f.engine.tick();await f.engine.tick();await f.engine.tick()
+ assert.equal(f.plans,2);assert.equal(attempts,2);assert.equal(f.store.data.records.I1.state,'publish_uncertain');assert.equal(f.store.data.records.I2.state,'handed_off')
+})
+test('an unreadable comment list for one quarantined issue does not block another issue',async()=>{
+ const f=fixture();f.github.postComment=async()=>{throw new Error('timeout')};await f.engine.tick()
+ f.store.data.records.I1.reconcileAfter=0
+ f.github.comments=async number=>{if(number===1)throw new Error('issue comments unavailable');return []}
+ f.github.postComment=async()=>({id:2,html_url:'https://github.com/o/r/issues/2#issuecomment-2'})
+ await f.engine.tick();assert.equal(f.store.data.records.I2.state,'handed_off')
+})
+test('restart after the final interrupted attempt cannot exceed the issue retry budget',async()=>{
+ const f=fixture();f.store.data.records.I1={number:1,state:'planning',attempts:3,text:null}
+ await f.engine.tick();assert.equal(f.store.data.records.I1.state,'needs_attention');assert.equal(f.store.data.records.I2.state,'handed_off');assert.equal(f.plans,1)
+})
+test('a saved final-attempt plan becoming stale cannot start a fourth plan after restart',async()=>{
+ const f=fixture();f.store.data.records.I1={number:1,state:'planned',attempts:3,text:'old plan',fingerprint:'older context'}
+ await f.engine.tick();assert.equal(f.plans,0);assert.equal(f.store.data.records.I1.state,'needs_attention')
+ await f.engine.tick();assert.equal(f.store.data.records.I2.state,'handed_off');assert.equal(f.plans,1)
+})
+test('stale multipart recovery cannot bypass an exhausted planning budget in the same tick',async()=>{
+ const f=fixture();f.store.data.records.I1={number:1,key:'old',state:'publishing',attempts:3,text:'x'.repeat(70000),fingerprint:'older context',receipts:{'part-1':{id:1,html_url:'https://github.com/o/r/issues/1#issuecomment-1'}}}
+ await f.engine.tick();assert.equal(f.plans,0);assert.equal(f.posts.length,0);assert.equal(f.store.data.records.I1.state,'needs_attention')
+ await f.engine.tick();assert.equal(f.store.data.records.I2.state,'handed_off')
+})
+test('planning cooldown skips the smallest failed issue and bounded attempts survive context edits',async()=>{
+ const f=fixture();let calls=0
+ f.engine.plan=async({record})=>{if(record.number===1){calls++;throw new Error('planner stuck')}return{text:'plan',commit:'a',sessionId:'s'}}
+ await f.engine.tick();await f.engine.tick();assert.equal(f.store.data.records.I2.state,'handed_off')
+ for(let i=0;i<2;i++){f.store.data.records.I1.retryAt=0;f.issues[0].body='revision '+i;await f.engine.tick()}
+ f.store.data.records.I1.retryAt=0;f.issues[0].body='another revision';await f.engine.tick()
+ assert.equal(calls,3);assert.equal(f.store.data.records.I1.state,'needs_attention')
 })
 test('persisted receipt prevents resend even when remote comment was deleted',async()=>{
  const f=fixture();await f.engine.tick();const record=f.store.data.records.I1
@@ -60,7 +102,7 @@ test('restart after a confirmed part rechecks current eligibility before sending
  const f=fixture();await f.engine.tick()
  const record=f.store.data.records.I1;record.state='publishing';record.commentId=null
  f.comments.length=0;record.pending=null;record.receipts={};f.issues[0].state='closed'
- await f.engine.tick();assert.equal(f.posts.length,1);assert.equal(record.state,'stale')
+ await f.engine.tick();assert.equal(f.posts.length,2);assert.equal(record.state,'stale');assert.equal(f.store.data.records.I2.state,'handed_off')
 })
 test('default branch advances or execution skill changes invalidate unpublished plans',async()=>{
  for(const change of ['code','skills']){

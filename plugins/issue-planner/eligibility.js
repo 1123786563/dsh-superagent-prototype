@@ -61,7 +61,7 @@ export function evaluate(snapshot, config, busyNumbers=new Set()) {
    candidates.push(issue)
   } catch(error) { skipped.push({number:issue.number,reason:error.message}) }
  }
- candidates.sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at))||a.number-b.number)
+ candidates.sort((a,b)=>a.number-b.number)
  return {candidates,skipped}
 }
 export function relatedFor(snapshot, number) {
