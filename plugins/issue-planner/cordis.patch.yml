@@ -9,3 +9,7 @@
         sourceDirectory: ''
         skillsDirectory: ''
         pollSeconds: 300
+    - id: issue-planner-settings
+      name: '@local/dsh-issue-planner/settings'
+      config:
+        entryId: issue-planner

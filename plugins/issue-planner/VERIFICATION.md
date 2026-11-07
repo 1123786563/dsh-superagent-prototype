@@ -4,9 +4,11 @@
 
 ## 已验证
 
-- Node 原生测试 45/45 通过：根上下文、所有依赖章节、原生与正文阻塞、父级冲突/循环、完整分页、稳定选择、持久锁、重启恢复、网络不确定不重发、已确认 receipt、分段交接、原文保留、暂停取消、技能资源缺失、账号授权、禁用生命周期、固定 commit 源码读取与受限规划 Session。
+- Node 原生测试 55/55 通过：根上下文、所有依赖章节、原生与正文阻塞、父级冲突/循环、完整分页、稳定选择、持久锁、重启恢复、网络不确定不重发、已确认 receipt、分段交接、原文保留、暂停取消、技能资源缺失、账号授权、禁用生命周期、固定 commit 源码读取与受限规划 Session。
 - 独立只读审查发现的重复发送、恢复时旧上下文、遗漏后续依赖章节、运行中暂停未取消、缺失传递技能资源和 @ 字符改写问题已修复，并有对应回归用例。
 - JavaScript 入口语法检查通过。
+- 配置表单回归覆盖：关闭默认值、保存后保留未展示字段、必填配置未完成不能启用、序列化保存中的版本冲突、请求同源与大小边界、开关仅修改草稿、显式保存才启用、保存失败保留修改、动态表达式只读、延迟启动后的运行状态刷新且不覆盖草稿。
+- 表单代码经过独立只读审查；修复了状态只在读取/保存时更新的问题，改为每 5 秒更新运行状态并在卸载时取消请求及定时器。
 - 用户补充要求后的回归：严格按最小 issue 编号选择；单张不确定发布隔离且不重发；冷却跳过、需求编辑与重启均不能重置累计预算；最后一次已保存计划/分段发布恢复后仍不能开始第 4 次规划；实施受阻观察不妨碍下一张独立任务；交接 30 分钟无工单和工单 24 小时无进展的状态判定均通过。
 - 针对本轮调度变更的独立只读审查发现了最后一次已保存计划在上下文变化后可能突破重试上限的问题，已在每次真正启动规划前增加预算门禁，并补上两条恢复路径的回归测试。
 
@@ -15,7 +17,8 @@
 - 使用现有执行账号完成 GitHub 全量只读扫描：128 个 open issues，展开到 238 个相关 issue 节点，完成 478 次 GitHub 请求。验证了实际 GraphQL parent/subIssues/blockedBy schema、REST 分页、评论和 PR 关闭关联。没有发布评论或创建工单。
 - 就绪与 PR 检查后得到 5 个候选；使用真实 Superagent 完整分页工单清单排除已有工单的 #615、#616，剩余 #511、#1020、#1038。本轮已改为严格按最小编号排序，该次扫描中的第一项仍为 #511。扫描结果随仓库状态变化，不代表已领取或已派发。
 - 首次串行扫描在 10 分钟超时后失败，未使用部分数据；改为每批最多 4 个并发读取、合并关系查询并省去零评论查询后，全量扫描成功。
-- 已通过 plugin_manager 安装 @local/dsh-issue-planner 0.1.0，配置 enabled=false。安装器返回 application=restart-required，原因 unmanaged-plugin；Config inspection 已发现 include:issue-planner 并正确投影 schema，实际本机状态接口返回 phase=disabled、enabled=false、零记录。
+- 首次安装 @local/dsh-issue-planner 0.1.0 时，配置 enabled=false。安装器返回 application=restart-required，原因 unmanaged-plugin；当时 Config inspection 已发现 include:issue-planner，实际状态接口曾返回 phase=disabled、enabled=false、零记录。
+- 表单版本 0.1.1 已通过 plugin_manager 重新安装。原地安装先返回 already-installed，按安装器要求先 remove_bundle 再 install_bundle，未清除业务状态目录。最终返回 restart-required / package-moved、warnings=[]；安装配置仍默认 enabled=false。当前运行进程尚未加载此版本，settings/status 接口为 404，新 Config 条目尚未出现；不可宣称表单已在实际 GUI 可见。需重启后验证原生设置入口、同源保存与真实显示。
 - 安装链接指向保留的 issue-planner 工作区；已核对安装资源的中文/英文标题和 463 字节原创 SVG。尚未重启 DSH，不宣称后续修改的完整运行代码已加载；后续启用前需要重启并复核。
 - 真实 superpowers 7.0.1 目录已加载并校验 15 个技能及所需执行资源；资源摘要 b9b638958f251546414747fb8a954abd90ce393ca8335e1e962e45ec85ed5f05。
 
