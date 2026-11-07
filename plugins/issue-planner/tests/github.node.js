@@ -1,6 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Github } from '../github.js'
+test('repository preflight and default commit use the canonical metadata endpoint',async()=>{
+ const gh=new Github({repository:'owner/repo',cli:'unused'}),sha='a'.repeat(40)
+ gh.api=async path=>{
+  if(path==='repos/owner/repo')return{permissions:{push:true},default_branch:'main'}
+  if(path==='repos/owner/repo/commits/main')return{sha}
+  throw new Error('Not Found (HTTP 404): '+path)
+ }
+ assert.equal((await gh.api(gh.repo(''))).permissions.push,true)
+ assert.equal(await gh.defaultCommit(),sha)
+ assert.equal(gh.repo('issues/1/comments'),'repos/owner/repo/issues/1/comments')
+})
 test('pages read beyond 100 and exclude PRs from scan input',async()=>{
  const gh=new Github({repository:'owner/repo',cli:'unused'})
  gh.api=async path=>/[?&]page=1(?:&|$)/.test(path)?Array.from({length:100},(_,i)=>({number:i+1})): [{number:101}]

@@ -9,7 +9,7 @@ export function command(file,args,{signal,input,maxBuffer=16*1024*1024,cwd}={}) 
 }
 export class Github {
  constructor(config,signal){this.config=config;this.signal=signal}
- repo(path){return `repos/${this.config.repository}/${path}`}
+ repo(path=''){return `repos/${this.config.repository}${path?'/'+path:''}`}
  async api(path,input){
   const args=['api','--hostname','github.com',path,'-H','Accept: application/vnd.github+json','-H','X-GitHub-Api-Version: 2022-11-28']
   if(input!==undefined)args.push('--method','POST','--input','-')
