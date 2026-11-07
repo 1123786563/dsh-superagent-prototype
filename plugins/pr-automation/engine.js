@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { eligible, mergeBlockers, revisionKey, VERSION } from './policy.js'
 import { REVIEW_PROMPT } from './reviewer.js'
+import { executionState } from './execution-window.js'
 
 export function policyKey(config) {
   return createHash('sha256').update(JSON.stringify({ version: VERSION, prompt: REVIEW_PROMPT,
@@ -13,11 +14,17 @@ export class Automation {
     Object.assign(this, { config, github, store, review, available, signal, localCi, now })
     this.status = { phase: 'starting', lastPoll: null, lastError: null, pulls: {} }
   }
+  async canRun() {
+    const execution = executionState(this.config, new Date(this.now()))
+    this.status.execution = execution
+    if (!execution.allowed) { this.status.phase = execution.reason; return false }
+    return this.available()
+  }
   async tick() {
     if (this.busy) return
     this.busy = true
     try {
-      if (!await this.available()) { this.status.phase = 'paused'; return }
+      if (!await this.canRun()) { if (this.status.execution?.allowed) this.status.phase = 'paused'; return }
       const pulls = await this.github.pulls()
       this.status.phase = 'ready'; this.status.lastPoll = this.now(); this.status.lastError = null
       const current = new Set(pulls.map(pr => String(pr.number)))
@@ -29,7 +36,7 @@ export class Automation {
           continue
         }
         try {
-          if (!await this.available()) { this.status.phase = 'paused'; return }
+          if (!await this.canRun()) { if (this.status.execution?.allowed) this.status.phase = 'paused'; return }
           // REST's list response omits diff counts and mergeability; always fetch a full, fresh detail.
           const detail = await this.github.pull(pr.number)
           if (eligible(detail, this.config)) await this.process(detail)
@@ -56,7 +63,7 @@ export class Automation {
       catch (error) {
         this.status.pulls[pr.number] = { state: 'manual', head: pr.head.sha, reasons: [String(error)] }; return
       }
-      if (this.signal.aborted || !await this.available()) { this.status.pulls[pr.number] = { state: 'paused', head: pr.head.sha }; return }
+      if (this.signal.aborted || !await this.canRun()) { this.status.pulls[pr.number] = { state: 'paused', head: pr.head.sha }; return }
       const result = await this.review(snapshot.context)
       record = { key, policy: this.config.policyKey, ...result, reviewedAt: this.now(), files: snapshot.files.map(file => ({ filename: file.filename, previous_filename: file.previous_filename })) }
       this.store.data.records[storeKey] = record
@@ -64,7 +71,7 @@ export class Automation {
     }
     // Re-check consent before publishing a review, including after a long model call.
     let fresh = await this.github.pull(pr.number)
-    if (!eligible(fresh, this.config) || revisionKey(fresh) !== key || !await this.available()) {
+    if (!eligible(fresh, this.config) || revisionKey(fresh) !== key || !await this.canRun()) {
       this.status.pulls[pr.number] = { state: 'superseded', head: pr.head.sha }; return
     }
     if (!record.reviewId) {
@@ -74,6 +81,7 @@ export class Automation {
     if (record.verdict.decision !== 'pass') {
       this.status.pulls[pr.number] = { state: record.verdict.decision, head: pr.head.sha, reviewId: record.reviewId, summary: record.verdict.summary }; return
     }
+    if (!await this.canRun()) { this.status.pulls[pr.number] = { state: 'paused', head: pr.head.sha }; return }
     let localResult
     if (this.config.ciMode === 'local' || this.config.ciMode === 'both') {
       this.status.pulls[pr.number] = { state: 'testing', head: pr.head.sha, reviewId: record.reviewId }
@@ -81,7 +89,7 @@ export class Automation {
     }
     const [ci, reviews, discussion, files, baseIncluded, available] = await Promise.all([
       this.config.ciMode === 'local' ? { checks: [], statuses: [], suites: [] } : this.github.checks(pr.head.sha), this.github.reviews(pr.number), this.github.discussions(pr.number), this.github.files(pr.number),
-      this.github.baseIncluded(pr), this.available(),
+      this.github.baseIncluded(pr), this.canRun(),
     ])
     // Keep the final PR read adjacent to the merge request, after slower availability/CI reads.
     fresh = await this.github.pull(pr.number)
@@ -91,6 +99,10 @@ export class Automation {
     if (!this.config.autoMerge) reasons.push('自动合并开关已关闭')
     if (!available) reasons.push('Superagent 已暂停、来源已停用或仓库配置已变化')
     if (this.signal.aborted) reasons.push('插件正在停止')
+    // A slow final PR read may cross the configured boundary after canRun resolved.
+    const execution = executionState(this.config, new Date(this.now()))
+    this.status.execution = execution
+    if (!execution.allowed) reasons.push(execution.reason === 'disabled' ? 'PR 自动审核总开关已关闭' : '当前不在允许执行的时间段')
     if (reasons.length) {
       this.status.pulls[pr.number] = { state: 'waiting', head: fresh.head.sha, reviewId: record.reviewId, reasons }; return
     }

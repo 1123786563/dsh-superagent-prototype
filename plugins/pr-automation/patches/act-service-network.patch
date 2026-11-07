@@ -1,0 +1,15 @@
+diff --git a/pkg/runner/run_context.go b/pkg/runner/run_context.go
+--- a/pkg/runner/run_context.go
++++ b/pkg/runner/run_context.go
+@@ -395,8 +395,10 @@ func (rc *RunContext) startJobContainer() common.Executor {
+ 			return nil
+ 		}
+ 
+ 		jobContainerNetwork := rc.Config.ContainerNetworkMode.NetworkName()
+-		if rc.containerImage(ctx) != "" {
++		// Hosted runner images also need the service network. An explicit bridge
++		// must not strand services on a different network from their job.
++		if rc.containerImage(ctx) != "" || len(rc.Run.Job().Services) > 0 {
+ 			jobContainerNetwork = networkName
+ 		} else if jobContainerNetwork == "" {
+ 			jobContainerNetwork = "host"

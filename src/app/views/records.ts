@@ -145,7 +145,8 @@ export const ticketLine = (view: Snapshot, ticket: Ticket) => {
   const mergePull = latestPull && view.sources.instance('github')?.enabled && subscribed.some(thread =>
     thread.key === `github:${latestPull}` && ticket.follows?.some(follow => !follow.closed && follow.thread === thread.key)
       && !thread.context?.includes(ticket.id) && thread.meta.isPr === true && thread.meta.number === latestPull
-      && thread.meta.pullState === 'open' && thread.meta.mergeable === true && thread.meta.mergeableState === 'clean'
+      && thread.meta.pullState === 'open' && thread.meta.mergeable === true
+      && (thread.meta.mergeableState === 'clean' || thread.meta.mergeableState === 'unstable')
       && thread.meta.isDraft === false) ? latestPull : undefined
   const summary = ticketSummary(ticket)
   return { ...summary, actions: { ...summary.actions, ...(mergePull ? { merge: mergePull } : {}) },

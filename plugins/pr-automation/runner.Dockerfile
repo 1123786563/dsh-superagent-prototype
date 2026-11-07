@@ -5,3 +5,5 @@ USER root
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postgresql-client \
  && rm -rf /var/lib/apt/lists/*
+# OpenBot's CI uses --break-system-packages (pip >=23); the base ships pip 22.
+RUN python -m pip install --no-cache-dir --upgrade pip==25.3

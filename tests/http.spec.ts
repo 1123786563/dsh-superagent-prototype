@@ -27,6 +27,29 @@ function serve(runtime: Partial<Record<keyof HttpHost, unknown>>, host = '127.0.
   }
 }
 
+it('saves Corsair credentials without returning the key, rejects unsafe endpoints, and removes the record', async () => {
+  let record: unknown
+  const credentials = {
+    readRecord: vi.fn(async () => record),
+    modifyRecord: vi.fn(async (_key: unknown, update: () => Promise<unknown>) => { record = await update() }),
+    deleteRecord: vi.fn(async () => { record = undefined }),
+  }
+  const call = serve({ credentials })
+  expect(await call('GET', 'corsair')).toEqual({ status: 200, body: { configured: false } })
+  const input = { endpoint: 'https://mcp.corsair.dev/mcp', apiKey: ['fixture', 'corsair', 'key'].join('-') }
+  expect(await call('PUT', 'corsair', input)).toEqual({ status: 200, body: { configured: true, endpoint: input.endpoint } })
+  expect(record).toEqual({ kind: 'api-key', key: input.apiKey, env: { CORSAIR_MCP_URL: input.endpoint } })
+  expect(JSON.stringify((await call('GET', 'corsair')).body)).not.toContain(input.apiKey)
+  for (const endpoint of ['http://mcp.corsair.dev/mcp', 'https://corsair.dev.evil.example/mcp',
+    'https://user@example.corsair.dev/mcp', 'https://mcp.corsair.dev/mcp?key=x']) {
+    expect(await call('PUT', 'corsair', { ...input, endpoint })).toMatchObject({ status: 400 })
+  }
+  expect(await call('PUT', 'corsair', input, { 'x-orchestrator-request': undefined })).toMatchObject({ status: 403 })
+  expect(credentials.modifyRecord).toHaveBeenCalledTimes(1)
+  expect(await call('DELETE', 'corsair')).toEqual({ status: 200, body: { configured: false } })
+  expect(record).toBeUndefined()
+})
+
 it('serves the board with normalized query defaults, column paging, and an optional configured repository', async () => {
   const tickets: Ticket[] = Array.from({ length: 105 }, (_, index) => ({ id: `t${index.toString().padStart(3, '0')}`,
     title: index === 104 ? 'Needle' : 'Task', decisionId: 'd', channels: [], assignments: [], inputs: [], undelivered: [],

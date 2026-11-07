@@ -20,7 +20,7 @@ const workflowText = stringify({ name: 'Fixture CI', on: { pull_request: {} }, j
 const credentialNames = ['GITHUB_TOKEN', 'GH_TOKEN', 'AWS_SECRET_ACCESS_KEY', 'SSH_AUTH_SOCK', 'NPM_TOKEN', 'DSH_API_KEY']
 const exists = async path => access(path).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error })
 
-async function fixture(t, { actVersion = 'act version 0.2.97-dsh1', symlinkActrc = false, runProcess } = {}) {
+async function fixture(t, { actVersion = 'act version 0.2.97-dsh2', symlinkActrc = false, runProcess } = {}) {
   const tempParent = await realpath(tmpdir())
   const root = await mkdtemp(join(tempParent, 'dsh-local-ci-test-'))
   t.after(async () => {
@@ -178,6 +178,9 @@ test('prepareCheckout uses absolute workspace paths, removes symlink .actrc and 
   assert.equal(await exists(join(workspace, '.actrc')), false)
   assert.equal(await readFile(f.externalActrc, 'utf8'), '--privileged\n')
   assert.equal((await execute('git', ['-C', workspace, 'rev-parse', 'HEAD'])).stdout.trim(), f.pr.head.sha)
+  // act archives regular files only: an empty refs directory disappears in the container,
+  // and Git then rejects the checkout even when HEAD/config/objects were copied.
+  assert.equal(await readFile(join(workspace, '.git', 'refs', 'heads', 'dsh-ci-head'), 'utf8'), f.pr.head.sha + '\n')
   const checkoutCalls = (await f.logs()).filter(entry => entry.kind === 'git' && entry.args.includes('core.hooksPath=/dev/null'))
   assert.ok(checkoutCalls.length >= 5)
   for (const call of checkoutCalls) assert.equal(call.args[call.args.indexOf('-C') + 1], workspace)
@@ -186,7 +189,7 @@ test('prepareCheckout uses absolute workspace paths, removes symlink .actrc and 
 
 test('initialize rejects ordinary act builds and nonabsolute source directories', async t => {
   const f = await fixture(t, { actVersion: 'act version 0.2.97' })
-  await assert.rejects(f.runner.initialize(), /0\.2\.97-dsh1/)
+  await assert.rejects(f.runner.initialize(), /0\.2\.97-dsh2/)
   f.config.localCi.sourceDirectory = 'relative/source'
   await assert.rejects(f.runner.initialize(), /绝对路径/)
 })

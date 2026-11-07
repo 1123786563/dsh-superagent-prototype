@@ -6,17 +6,26 @@ import { Github } from './github.js'
 import { Automation, policyKey } from './engine.js'
 import { reviewWithLlm } from './reviewer.js'
 import { LocalCi } from './local-ci.js'
+import { LOCAL_CI_VERSION } from './ci-policy.js'
+import { executionState, validateExecutionConfig } from './execution-window.js'
 
 export const name = 'dsh-pr-automation'
 export const inject = ['llm', 'agentDefaultModel', 'webServer']
 export const Config = s.object({
+  enabled: s.boolean().default(true).description('总开关：关闭后不轮询 PR、不审核、不执行 CI，也不自动合并。'),
   repository: s.string().pattern(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).required().description('监听仓库，owner/repo。'),
   cli: s.string().default('gh-agent').description('专用机器人 GitHub CLI。'),
   baseBranch: s.string().default('main').description('允许自动合并的目标分支。'),
   label: s.string().default('auto-review').description('加入审核与合并流程的标签。'),
   autoMerge: s.boolean().default(false).description('审核和全部门禁通过后自动合并。'),
   mergeMethod: s.union(['merge', 'squash', 'rebase']).default('merge').description('GitHub 合并方式。'),
-  pollSeconds: s.number().min(60).max(3600).step(1).default(60).description('轮询间隔，秒。'),
+  pollSeconds: s.number().min(60).max(3600).step(1).default(60).description('轮询间隔，秒（60–3600）；每轮完成后等待此时长，不重叠执行。'),
+  executionWindow: s.object({
+    enabled: s.boolean().default(false).description('启用每日执行时段；关闭表示全天允许执行。'),
+    timeZone: s.string().default('Asia/Shanghai').description('执行时区，IANA 名称，例如 Asia/Shanghai。'),
+    start: s.string().pattern(/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/).default('09:00').description('每日开始时间 HH:mm，包含此时刻。'),
+    end: s.string().pattern(/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/).default('22:00').description('每日结束时间 HH:mm，不包含此时刻；早于开始时间表示跨午夜，不可与开始时间相同。'),
+  }).default({}).description('每日允许自动审核、CI 和合并的时间段。'),
   maxChangedLines: s.number().min(1).max(5000).step(1).default(500).description('自动处理的行数上限（不含该值）。'),
   maxContextChars: s.number().min(10000).max(500000).step(1).default(180000).description('审核上下文字符上限；超出转人工。'),
   stateDir: s.string().pattern(/^\//).required().description('审核记录与锁的绝对目录。'),
@@ -27,7 +36,7 @@ export const Config = s.object({
   ciMode: s.union(['github', 'local', 'both']).default('github').description('CI 来源：GitHub、本地 act，或两者同时通过；平台保护规则始终生效。'),
   localCi: s.object({
     sourceDirectory: s.string().default('').description('现有仓库的绝对路径；只读取 Git 对象，不复制或修改未提交文件。'),
-    actCli: s.string().default('act').description('本包构建的 act 0.2.97-dsh1 隔离版；拒绝共享 toolcache 的普通发行版。'),
+    actCli: s.string().default('act').description('本包构建的 act 0.2.97-dsh2 隔离版；拒绝共享 toolcache 的普通发行版。'),
     dockerCli: s.string().default('docker'), gitCli: s.string().default('git'),
     dockerHost: s.string().default('').description('Unix Docker socket；留空读取当前 Docker context。'),
     runnerImage: s.string().default('').description('已安装 runner 镜像的不可变 sha256 ID。'),
@@ -123,6 +132,7 @@ export async function apply(ctx, input) {
     }))
     res.end(JSON.stringify({ repository: config.repository, label: config.label, autoMerge: config.autoMerge,
       ciMode: config.ciMode, ciJobs: config.localCi.jobs.map(({ workflow, job }) => ({ workflow, job })), ciRuns,
+      ciRuntime: localCi ? { version: LOCAL_CI_VERSION, actVersion: localCi.actVersion, runnerImage: localCi.runnerImage, configKey: localCi.configKey } : undefined,
       model, policy: config.policyKey, ...automation.status }))
   } })
   const cycle = () => {

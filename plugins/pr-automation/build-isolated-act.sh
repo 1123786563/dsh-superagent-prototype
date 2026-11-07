@@ -7,10 +7,10 @@ source_dir="$repo_root/.artifacts/act-dsh-source"
 binary_dir="$repo_root/.artifacts/pr-automation"
 binary="$binary_dir/act-dsh-isolated"
 source_commit="2540ba6c49dfbafe167d655e4044921cd2ed19e7"
-patch="$plugin_dir/patches/act-toolcache-isolation.patch"
-version='0.2.97-dsh1'
+patches=("$plugin_dir/patches/act-toolcache-isolation.patch" "$plugin_dir/patches/act-service-network.patch")
+version='0.2.97-dsh2'
 runner_tag='dsh-pr-act:openbot'
-runner_image='sha256:2dfe82833be3b113b1b259de84a5cbfd8e5a42fa4b8137ea5d206fca6d75af4b'
+runner_image='sha256:8cb9d32523bd18f280c365eb461d07f7b49ba7e06e3497584f128fb50d408a8b'
 
 if [[ ! -d "$source_dir/.git" ]]; then
   mkdir -p "$repo_root/.artifacts"
@@ -22,12 +22,14 @@ if [[ "$actual_commit" != "$source_commit" ]]; then
   printf 'Unexpected act source commit: %s\n' "$actual_commit" >&2
   exit 1
 fi
-if git -C "$source_dir" apply --reverse --check "$patch" >/dev/null 2>&1; then
-  :
-else
-  git -C "$source_dir" apply --check "$patch"
-  git -C "$source_dir" apply "$patch"
-fi
+for patch in "${patches[@]}"; do
+  if git -C "$source_dir" apply --reverse --check "$patch" >/dev/null 2>&1; then
+    :
+  else
+    git -C "$source_dir" apply --check "$patch"
+    git -C "$source_dir" apply "$patch"
+  fi
+done
 gofmt -w "$source_dir/pkg/runner/run_context.go"
 mkdir -p "$binary_dir"
 (

@@ -3,7 +3,7 @@ import { useState, type ReactNode } from 'react'
 import { ApiError, usePoll, type TicketPageView } from './api.ts'
 import { DisclosureRow, Dot, Icon, Tag, type IconName } from './controls.tsx'
 import { decisionMark, reportDot, ticketMark } from './marks.ts'
-import { usePanel } from './provider.tsx'
+import { usePanel, usePanelData } from './provider.tsx'
 import { settingsRoute } from './route.ts'
 import { Earlier, ThreadLine, automatedRuns } from './rows.tsx'
 import { actorName, localized, readableMarkers, reasonLabel, valueLabel, when } from './text.ts'
@@ -111,6 +111,7 @@ function EmbeddedHead({ title, children }: { title: ReactNode; children?: ReactN
 
 export function TicketPage({ id, embedded = false, onChanged }: { id: string; embedded?: boolean; onChanged?: () => Promise<unknown> }) {
   const { t, call } = usePanel()
+  const { setup } = usePanelData()
   const { data, error, reload } = usePoll(() => call('GET tickets/:id', { id }), [id])
   const after = async (request: Promise<unknown>) => { await request; await reload(); await onChanged?.() }
   const Heading = embedded ? EmbeddedHead : PageHead
@@ -136,6 +137,9 @@ export function TicketPage({ id, embedded = false, onChanged }: { id: string; em
       {data.actions.retry && <ConfirmButton variant="outline" icon="refresh" label={t('retry')} title={t('retryTitle')}
         message={t('retryConfirm', { title: data.title })}
         onConfirm={() => after(call('POST tickets/:id/retry', { id }))} />}
+      {data.actions.merge && <ConfirmButton variant="outline" icon="pull" label={t('mergePull')} title={t('mergePullTitle')}
+        message={t('mergePullConfirm', { number: data.actions.merge, repository: setup?.accounts?.repository ?? t('board.repository'), title: data.title })}
+        onConfirm={() => after(call('POST tickets/:id/merge', { id }))} />}
       {data.sessionId && <SessionButton variant="outline" sessionId={data.sessionId} />}
     </Heading>
     {error && <LoadState error={error} loading={false} />}

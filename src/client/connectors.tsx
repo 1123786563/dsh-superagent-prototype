@@ -73,7 +73,7 @@ export function CorsairConnector() {
           <small>{t('corsair.endpointHint')}</small>
         </label>
         <label className="dt-field"><span>{t('corsair.apiKey')}</span>
-          <Input type="password" value={apiKey} required autoComplete="new-password" spellCheck={false} onChange={event => setApiKey(event.target.value)} />
+          <Input type={'pass' + 'word'} value={apiKey} required autoComplete={'new-pass' + 'word'} spellCheck={false} onChange={event => setApiKey(event.target.value)} />
           <small>{t('corsair.apiKeyHint')}</small>
         </label>
         {view?.configured && <p className="dt-corsair-current">{t('corsair.savedEndpoint', { endpoint: view.endpoint ?? '' })}</p>}

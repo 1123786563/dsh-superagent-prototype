@@ -389,8 +389,14 @@ it('offers the merge action only while the followed PR reads mergeable, and merg
   const stale = api({ mergeable_state: 'blocked' })
   await expect(runtime.mergeTicket(ticket.id)).rejects.toThrow('no longer ready to merge')
   stale.mockRestore()
+  // Failed advisory CI marks a mergeable PR unstable; it still offers the explicit user action.
+  patch({ mergeableState: 'unstable' })
+  expect(row().actions).toMatchObject({ merge: 42 })
+  patch({ isDraft: true })
+  expect(row().actions).not.toHaveProperty('merge')
+  patch({ isDraft: false })
   // The host repeats the fetch and sends its head SHA with the merge request.
-  const success = api({})
+  const success = api({ mergeable_state: 'unstable' })
   await expect(runtime.mergeTicket(ticket.id)).resolves.toEqual({ merged: true, number: 42 })
   expect(success).toHaveBeenCalledWith('pulls/42/merge', '-X', 'PUT', '-f', 'sha=head-1', '-f', 'merge_method=merge')
   expect(runtime.store.tickets.get(ticket.id)?.follows).toContainEqual(expect.objectContaining({ thread: 'github:42', closed: expect.objectContaining({ outcome: 'merged' }) }))

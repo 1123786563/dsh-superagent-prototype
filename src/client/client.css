@@ -460,7 +460,8 @@ a.dt-btn, a.dt-btn:hover { text-decoration: none; }
 .dt-board-ticket-foot > span { display: inline-flex; align-items: center; gap: 4px; }
 .dt-board-ticket-foot > span:first-child { margin-right: auto; }
 .dt-board-ticket-actions { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 3px; }
-.dt-board-ticket-actions .dt-btn { width: 28px; height: 28px; padding: 0; border-radius: 6px; color: var(--dsw-alias-label-secondary); }
+.dt-board-ticket-actions .dt-btn { height: 28px; padding: 0 8px; border-radius: 6px; white-space: nowrap; color: var(--dsw-alias-label-primary); }
+.dt-board-ticket-actions .dt-btn[aria-label] { width: 28px; padding: 0; color: var(--dsw-alias-label-secondary); }
 .dt-board-ticket-actions .dt-btn:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-2); }
 .dt-board-ticket-actions .dt-btn:active { background: var(--dsw-alias-bg-layer-1); }
 .dt-board-column-empty { padding: 24px 14px; color: var(--dsw-alias-label-secondary); text-align: center; font-size: 11px; line-height: 18px; }

@@ -205,7 +205,8 @@ export class Runtime extends Service implements SourceHost {
       if (error instanceof CliError && error.code === 404) throw new PullMergeError(`PR #${number} no longer exists or is inaccessible`)
       throw error
     }
-    if (pr.state !== 'open' || pr.merged || pr.draft || pr.mergeable !== true || pr.mergeable_state !== 'clean') {
+    if (pr.state !== 'open' || pr.merged || pr.draft || pr.mergeable !== true
+      || (pr.mergeable_state !== 'clean' && pr.mergeable_state !== 'unstable')) {
       throw new PullMergeError(`PR #${number} is no longer ready to merge. Refresh the board and try again.`)
     }
     let result: ReturnType<typeof PullMergeResultSchema.parse>

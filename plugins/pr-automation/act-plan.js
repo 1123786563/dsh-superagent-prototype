@@ -94,6 +94,14 @@ function validateServices(job, proxies) {
     }
     fixedImage(service.image, `service ${name}`)
     safeHealthOptions(service.options)
+    if (service.ports !== undefined) {
+      const proxy = proxies.find(item => item.service === name)
+      // Preserve the loopback endpoint used by workflow commands instead of
+      // silently forwarding a different port after removing Docker publishing.
+      if (!Array.isArray(service.ports) || service.ports.length !== 1) fail(`service proxy ${name} must match one static workflow port mapping`)
+      const ports = String(service.ports[0]).match(/^(?:(?:127\.0\.0\.1|0\.0\.0\.0):)?([0-9]+):([0-9]+)(?:\/tcp)?$/)
+      if (!ports || Number(ports[1]) !== proxy.hostPort || Number(ports[2]) !== proxy.containerPort) fail(`service proxy ${name} must match the workflow port mapping`)
+    }
     // The trusted runner's private network provides service DNS; never bind
     // service ports to the machine running Docker.
     delete service.ports

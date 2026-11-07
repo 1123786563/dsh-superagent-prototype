@@ -33,7 +33,7 @@ export class LocalCi {
     if (resolve(this.root, '..') !== stateRoot) throw new Error('CI 状态目录不能通过符号链接离开 stateDir')
     await chmod(this.root, 0o700)
     this.actVersion = await command(options.actCli, ['--version'])
-    if (this.actVersion !== 'act version 0.2.97-dsh1') throw new Error('需要使用本包 build-isolated-act.sh 构建的独立 toolcache 版 act 0.2.97-dsh1')
+    if (this.actVersion !== 'act version 0.2.97-dsh2') throw new Error('需要使用本包 build-isolated-act.sh 构建的独立 toolcache 版 act 0.2.97-dsh2')
     this.dockerHost = options.dockerHost || await command(options.dockerCli, ['context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'])
     if (!/^unix:\/\/\//.test(this.dockerHost)) throw new Error('首版本地 CI 只支持本机 Unix Docker socket')
     const images = JSON.parse(await command(options.dockerCli, ['image', 'inspect', options.runnerImage]))
@@ -71,6 +71,9 @@ export class LocalCi {
       await git(['-c', `credential.helper=!${quote(this.config.cli)} auth git-credential`, 'fetch', '--no-tags', '--depth=1', `https://github.com/${this.config.repository}.git`, pr.head.sha])
     }
     await git(['checkout', '--detach', '-q', pr.head.sha])
+    // act's file archive omits empty directories. Keep refs nonempty so the
+    // copied .git remains a valid repository for submodule/Git workflow steps.
+    await git(['update-ref', 'refs/heads/dsh-ci-head', pr.head.sha])
     if (await git(['rev-parse', 'HEAD']) !== pr.head.sha) throw new Error('CI 检出版本不匹配')
     await git(['remote', 'add', 'origin', `https://github.com/${this.config.repository}.git`])
     // Even act's restricted project config must not select a different image, workflow, job or dry-run mode.

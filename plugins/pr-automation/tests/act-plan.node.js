@@ -167,6 +167,16 @@ test('requires every service mapping and rejects duplicate or invalid ports and 
   assert.throws(() => compile(workflow, { serviceProxies: [proxy, { ...proxy, service: 'second' }] }), /duplicate/)
 })
 
+test('rejects service proxy ports that differ from trusted workflow mappings', () => {
+  for (const mismatch of [{ ...proxy, hostPort: 15432 }, { ...proxy, containerPort: 5433 }]) {
+    assert.throws(() => compile(serviceWorkflow(), { serviceProxies: [mismatch] }), /service proxy.*match/)
+  }
+  for (const ports of [['5432:5432'], ['127.0.0.1:5432:5432'], ['5432:5432/tcp']]) {
+    const workflow = serviceWorkflow(); workflow.jobs.test.services.postgres.ports = ports
+    assert.ok(compile(workflow, { serviceProxies: [proxy] }))
+  }
+})
+
 test('forbids dangerous service Docker fields and arbitrary options, including quoted flags', () => {
   for (const patch of [{ volumes: ['/etc:/host'] }, { build: '.' }, { credentials: { username: 'x' } }, { privileged: true },
     { options: '--privileged' }, { options: '--volume=/etc:/host' }, { options: '-v /etc:/host' },

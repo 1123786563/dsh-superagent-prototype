@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-export const LOCAL_CI_VERSION = 1
+export const LOCAL_CI_VERSION = 2
 export const taskIdentity = (workflow, job, matrix) => `${workflow}:${job}:${JSON.stringify(Object.entries(matrix).sort())}`
 export function localCiKey(config) {
   return createHash('sha256').update(JSON.stringify({ version: LOCAL_CI_VERSION, ...config })).digest('hex').slice(0, 24)

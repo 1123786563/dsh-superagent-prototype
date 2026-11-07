@@ -33,7 +33,7 @@ flowchart TD
 - 改动严格小于 `maxChangedLines`，当前为 500 行（additions + deletions）。
 - `github` / `both` 模式下，所有 GitHub Check Suites、各 suite 的最新 Check Runs 和 commit statuses 均成功，且至少有一项 CI；失败、重跑中、skipped、neutral、cancelled、timed_out 等均不放行。分页核对 total_count 和 suite 检查数量，不使用被截断的结果。`local` / `both` 模式还要求配置中的每个 job/matrix task 产生完整的成功证据并完成资源清理。
 - 没有未解决的 review thread，没有仍然有效的 CHANGES_REQUESTED，GitHub reviewDecision 不能是 REVIEW_REQUIRED / CHANGES_REQUESTED。
-- PR head 已包含当前 base commit，GitHub `mergeable=true` 且 `mergeable_state=clean`。已有其他流程开启 GitHub auto-merge 时暂停，避免多个流程并行合并。
+- PR head 已包含当前 base commit，GitHub `mergeable=true`。`github` / `both` 模式要求 `mergeable_state=clean`；`local` 模式接受 `clean` 或 `unstable`，仍须全部本地 CI 通过并由 GitHub 服务端执行分支保护。已有其他流程开启 GitHub auto-merge 时暂停，避免多个流程并行合并。
 - 高风险文件转人工：权限/安全、依赖及锁文件、迁移、部署、GitHub workflows、环境变量和凭据等；重命名前后的路径均检查。界面文件也由人工确认视觉结果并合并，以保留当前部署的 UI 审核约束。路径检查仅为补充，模型也须识别语义风险。
 - 当前 Superagent 正常、未暂停、GitHub 来源启用、仍监听同一仓库且使用同一个机器人账号。
 
@@ -45,7 +45,7 @@ flowchart TD
 
 OpenBot 配置使用 `ciMode: local`，本地只运行 `.github/workflows/ci.yml` 的 `static`、`deployables`（两个静态矩阵组合）、`test`（含 PostgreSQL 服务）和 `build`，共五个 job/matrix task。平台专属、部署、镜像发布、E2E/browser 等 jobs 不在本地集合中。每次运行读取 PR base SHA 上的 workflow，按 PR head SHA 建立干净 detached checkout，不复制源目录未提交文件。
 
-本地门禁使用受控构建的 act `0.2.97-dsh1`。`build-isolated-act.sh` 从固定上游 commit 构建一处小 patch，为每个 job/matrix task 使用随机 nonce 命名的 `/opt/hostedtoolcache` 卷；执行后必须验证并清理该卷、带 nonce 的容器/网络、临时 action cache 和 checkout。普通上游 act 会共享可写 `act-toolcache`，插件启动时会拒绝该二进制。runner 镜像以 sha256 固定；job 容器不挂 Docker socket，不注入 Harness、GitHub CLI 或云服务凭据，不发布 service host ports；服务只经 job 内 loopback TCP forwarder 访问。日志保存在 `stateDir/ci/pr-<number>-<nonce>/`，文件权限为 0600。
+本地门禁使用受控构建的 act `0.2.97-dsh2`。`build-isolated-act.sh` 从固定上游 commit 应用两处小 patch，确保 job 容器与服务使用同一私有网络，并为每个 job/matrix task 使用随机 nonce 命名的 `/opt/hostedtoolcache` 卷；执行后必须验证并清理该卷、带 nonce 的容器/网络、临时 action cache 和 checkout。普通上游 act 会共享可写 `act-toolcache`，插件启动时会拒绝该二进制。runner 镜像以 sha256 固定；job 容器不挂 Docker socket，不注入 Harness、GitHub CLI 或云服务凭据，不发布 service host ports；服务只经 job 内 loopback TCP forwarder 访问。服务转发的端口须与 base workflow 声明的静态映射一致，配置不匹配会在执行前被拒绝。临时 Git checkout 保持 detached，并保留指向目标 SHA 的本地引用，确保文件复制后仍能执行 Git 和子模块命令。日志保存在 `stateDir/ci/pr-<number>-<nonce>/`，文件权限为 0600。
 
 `ciMode: github` 只要求 GitHub 检查；`local` 只要求配置中的全部本地 job/matrix 通过；`both` 要求二者都通过。`dsh/act` status 只用于可见状态，不算作独立 GitHub CI。GitHub 分支保护仍由服务器在 REST merge 时执行；本地 act 结果不能绕过 required checks、approval、base 或权限限制。act 不完全实现 GitHub Actions（如 job permission、OIDC、concurrency 等）；本地 job 集合只提供额外的自动化证据，测试结果仍须按风险和范围解释。
 
@@ -98,11 +98,13 @@ curl -fsS -H 'x-pr-automation-request: 1' \
 | `superagentOrigin` | 现有 `http://127.0.0.1:3200` |
 | `stateDir` | 本机审核记录及锁的绝对目录 |
 
-完整 changed-file before/after、patch、PR 说明及 base 版本的根/祖先 AGENTS.md、README.md、package.json 会送到配置模型。模型没有工具，不会执行 PR 里的代码或指令。缺少必要的未修改调用方、测试或规格时须转人工；这是静态审核，插件本身不运行项目测试，测试执行由 CI 承担。模型结论有局限，人工审核和服务器分支保护仍适用于需要它们的改动。
+完整 changed-file before/after、patch、PR 说明及 base 版本的根/祖先 AGENTS.md、README.md、package.json 会送到配置模型。模型没有工具，不会执行 PR 里的代码或指令。缺少必要的未修改调用方、测试或规格时须转人工；模型审核本身是静态分析；项目测试由配置的 GitHub CI 或本地 act 后端执行。模型结论有局限，人工审核和服务器分支保护仍适用于需要它们的改动。
 
 ## 验证结果
 
 本次安装、线上只读检查、测试结果和未覆盖的验证范围见 [VERIFICATION.md](VERIFICATION.md)。
+
+本机 `GET /pr-automation/api/status`（请求头 `x-pr-automation-request: 1`）提供运行状态。最新版的 `ciRuntime` 包含实现版本、act 版本、镜像 SHA 和 CI 配置指纹；当前实现版本为 2，要求 act `0.2.97-dsh2`。安装器返回 `restart-required` 时须重启现有 DSH，再核对这些字段及 `phase: ready`；仅看到配置指纹更新不能证明执行代码已重载。
 
 ## 本地验证
 

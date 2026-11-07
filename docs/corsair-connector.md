@@ -19,7 +19,7 @@ dsh-superagent 的 **设置 → 连接器** 面板可保存 Corsair link 并将�
 
 ## 独立插件包
 
-[plugins/corsair](../plugins/corsair/README.md) 提供可单独安装的 DSH bundle，用于将 Worker connector row 加入 dsh-superagent Worker preset。它依赖 dsh-superagent 提供的 Host 路由和 Worker credential loader。
+连接器已内置在 dsh-superagent Worker preset 中。[plugins/corsair](../plugins/corsair/README.md) 仅作为旧 profile 的兼容包保留，全局行已禁用，避免向 Router 和其他 Session 暴露工具。无需单独安装。
 
 ## 限制
 
