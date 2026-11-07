@@ -18,8 +18,9 @@
 - 就绪与 PR 检查后得到 5 个候选；使用真实 Superagent 完整分页工单清单排除已有工单的 #615、#616，剩余 #511、#1020、#1038。本轮已改为严格按最小编号排序，该次扫描中的第一项仍为 #511。扫描结果随仓库状态变化，不代表已领取或已派发。
 - 首次串行扫描在 10 分钟超时后失败，未使用部分数据；改为每批最多 4 个并发读取、合并关系查询并省去零评论查询后，全量扫描成功。
 - 首次安装 @local/dsh-issue-planner 0.1.0 时，配置 enabled=false。安装器返回 application=restart-required，原因 unmanaged-plugin；当时 Config inspection 已发现 include:issue-planner，实际状态接口曾返回 phase=disabled、enabled=false、零记录。
-- 表单版本 0.1.1 已通过 plugin_manager 重新安装。原地安装先返回 already-installed，按安装器要求先 remove_bundle 再 install_bundle，未清除业务状态目录。最终返回 restart-required / package-moved、warnings=[]；安装配置仍默认 enabled=false。当前运行进程尚未加载此版本，settings/status 接口为 404，新 Config 条目尚未出现；不可宣称表单已在实际 GUI 可见。需重启后验证原生设置入口、同源保存与真实显示。
-- 安装链接指向保留的 issue-planner 工作区；已核对安装资源的中文/英文标题和 463 字节原创 SVG。尚未重启 DSH，不宣称后续修改的完整运行代码已加载；后续启用前需要重启并复核。
+- 表单版本 0.1.1 已通过 plugin_manager 重新安装。原地安装先返回 already-installed，按安装器要求先 remove_bundle 再 install_bundle，未清除业务状态目录。最终返回 restart-required / package-moved、warnings=[]；安装配置仍默认 enabled=false。安装后最初的进程未加载此版本，settings/status 曾为 404。用户随后明确允许“现在重启并继续验证”；检查时现有实例已完成重启（监听进程由 42882 变为 6242），两个 Config 条目和 Client settings.section/issue-planner 均已出现，settings/status 均返回成功且 enabled=false / phase=disabled。
+- 安装链接指向保留的 issue-planner 工作区；已核对分发资源包含 Client 模块、设置 Host、中文/英文标题和原创 SVG。实际设置页已可见：开关仅暂存，缺失基础配置时禁止启用；通过页面控件把轮询间隔保存为 600 秒，使用设置接口确认持久化，再通过控件恢复 300 秒。最终 enabled=false、phase=disabled，未调用真实模型或发布评论。
+- 实际截图核对浅色桌面与深色 390px 窄屏。窄屏表单 clientWidth=scrollWidth=353px，字段自动单列；深色输入背景 rgb(21,21,23)，文字 rgb(249,250,251)。测试后恢复原“跟随系统”主题与原视口。
 - 真实 superpowers 7.0.1 目录已加载并校验 15 个技能及所需执行资源；资源摘要 b9b638958f251546414747fb8a954abd90ce393ca8335e1e962e45ec85ed5f05。
 
 ## 未覆盖与部署缺项
@@ -29,7 +30,7 @@
 - 已用独立 Node 子进程验证仓库锁竞争；已验证锁目录删除会在副作用前同步检测失锁。本地文件锁只覆盖同主机同用户的规范锁根。尚未进行断电、长时间进程挂起后抢锁或多主机故障演练。
 - 模型计划的结构检查不能证明语义正确；需要执行 worker 按规格及测试验证。
 - GitHub 读取与评论发布间不存在原子门禁。原子本地记录和保守不重发保证不能替代 GitHub 服务端事务。
-- 已安装图标与多语言资源的浏览器实际显示尚未核对。
+- 设置页中文实际显示已核对；英文切换与插件列表图标尚未现场核对。
 
 ## 实施裁决
 
