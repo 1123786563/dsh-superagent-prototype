@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { canRetry, followupOwners, latestReport, liveTicket, settled, threadKey, ticketStage, type ActorRef, type ChannelRef, type Decision,
   type DecisionKind, type Thread, type ThreadFacts, type Ticket, type TicketStage, type Trigger } from '../../core/index.ts'
 import { allowedSender, listedBot } from '../../policy.ts'
+import { pullOf } from '../../sources/github-pull.ts'
 import type { ChannelLink, Localized } from '../../sources/kind.ts'
 import type { SourceRegistry } from '../../sources/registry.ts'
 import { workerSessionId } from '../../executor/dsh.ts'
@@ -138,8 +139,18 @@ export function threadFacts(store: Store, thread: Thread) {
   return { key: thread.key, source: thread.ref.source, title: threadTitle(store, thread), ...url ? { url } : {}, facts: (thread.meta.facts ?? {}) as ThreadFacts }
 }
 export type ThreadFactsView = ReturnType<typeof threadFacts>
-export const ticketLine = (view: Snapshot, ticket: Ticket) => ({ ...ticketSummary(ticket),
-  threads: view.threadsOf(ticket.id).map(thread => threadFacts(view.store, thread)) })
+export const ticketLine = (view: Snapshot, ticket: Ticket) => {
+  const subscribed = view.threadsOf(ticket.id)
+  const latestPull = liveTicket(ticket) ? pullOf(ticket) : undefined
+  const mergePull = latestPull && view.sources.instance('github')?.enabled && subscribed.some(thread =>
+    thread.key === `github:${latestPull}` && ticket.follows?.some(follow => !follow.closed && follow.thread === thread.key)
+      && !thread.context?.includes(ticket.id) && thread.meta.isPr === true && thread.meta.number === latestPull
+      && thread.meta.pullState === 'open' && thread.meta.mergeable === true && thread.meta.mergeableState === 'clean'
+      && thread.meta.isDraft === false) ? latestPull : undefined
+  const summary = ticketSummary(ticket)
+  return { ...summary, actions: { ...summary.actions, ...(mergePull ? { merge: mergePull } : {}) },
+    threads: subscribed.map(thread => threadFacts(view.store, thread)) }
+}
 export function threadTitle(store: Pick<Store, 'read'>, thread: Thread): string {
   const label = attribute(thread.meta.label)
   if (label) return label

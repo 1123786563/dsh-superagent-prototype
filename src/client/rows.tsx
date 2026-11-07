@@ -101,7 +101,7 @@ export function DecisionLine({ decision }: { decision: DecisionRow }) {
   </li>
 }
 
-function ThreadChip({ thread }: { thread: Pick<ThreadFacts, 'source' | 'facts' | 'url' | 'title'> }) {
+export function ThreadChip({ thread }: { thread: Pick<ThreadFacts, 'source' | 'facts' | 'url' | 'title'> }) {
   const { t } = usePanel()
   const cells = <>
     <span className="dt-chip-source">{valueLabel(t, 'source', thread.source)}</span>

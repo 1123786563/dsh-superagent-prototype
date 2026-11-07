@@ -1,0 +1,1 @@
+{"meta":{"title":"PR 自动审核与合并","description":"为带 auto-review 标签的 PR 独立审核；审核、CI 与讨论门禁全部通过后合并，保留版本和执行记录。"}}

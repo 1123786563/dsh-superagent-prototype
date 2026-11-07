@@ -30,6 +30,14 @@ Read the numbered documents in order; each builds only on the ones before it.
 - [007 Architecture](docs/007-architecture.md)
 - [008 Cookbook](docs/008-cookbook.md): adding a Source
 
+## Optional PR automation
+
+[PR review and merge plugin](plugins/pr-automation/README.md) adds independent review for labeled pull requests and merges only after revision, CI, discussion, and repository gates pass. It installs as a separate DSH bundle and follows the existing Superagent's pause and GitHub Source settings.
+
+## Corsair external connector
+
+[Configure Corsair](docs/corsair-connector.md) to give Worker Sessions access to applications connected to a Corsair link through MCP. A reusable standalone DSH bundle is in [plugins/corsair](plugins/corsair/README.md).
+
 ## Development
 
 `pnpm check` runs the typecheck, the tests and the build.

@@ -4,18 +4,20 @@ import type { SetupPlace } from '../setup.ts'
 import { DECISION_FILTERS, type DecisionFilter } from './api.ts'
 import type { T } from './text.ts'
 
-export const TABS = ['overview', 'source', 'trigger', 'eval', 'execution', 'settings'] as const
+export const TABS = ['board', 'overview', 'source', 'trigger', 'eval', 'execution', 'settings'] as const
 export type Tab = typeof TABS[number]
-export const SETTINGS_GROUPS = ['source', 'eval', 'execution', 'prompts', 'deployment'] as const
+export const SETTINGS_GROUPS = ['source', 'eval', 'execution', 'prompts', 'deployment', 'connectors'] as const
 export type SettingsGroup = typeof SETTINGS_GROUPS[number]
-export type Route = { page: 'overview' | 'source'; id?: undefined; query?: undefined }
+export interface BoardRouteQuery { q?: string; source?: string; order?: 'updated' | 'created' | 'oldest'; view?: 'board' | 'list' }
+export type Route = { page: 'board'; id?: string; query?: BoardRouteQuery }
+  | { page: 'overview' | 'source'; id?: undefined; query?: undefined }
   | { page: 'trigger'; id?: undefined; query?: { filter?: ThreadFilter } }
   | { page: 'trigger'; id: string; query?: { trigger?: string } }
   | { page: 'eval'; id?: undefined; query?: { filter?: DecisionFilter; window?: '24h' } }
   | { page: 'execution'; id?: undefined; query?: { filter?: TicketFilter } }
   | { page: 'execution'; id: string; query?: undefined }
   | { page: 'settings'; id?: undefined; query: { group: SettingsGroup; source?: string; version?: string } }
-export const HOME: Route = { page: 'overview' }
+export const HOME: Route = { page: 'board' }
 export const settingsRoute = (group: SettingsGroup, query: { source?: string; version?: string } = {}): Route =>
   ({ page: 'settings', query: { group, ...query } })
 export const setupPage = (place: SetupPlace): Route =>
@@ -34,6 +36,8 @@ export function parseRoute(value: unknown): Route | undefined {
   const text = (name: string) => typeof query?.[name] === 'string' ? query[name] as string : undefined
   const record = typeof id === 'string' && id ? id : undefined
   switch (page) {
+    case 'board': return { page, ...record ? { id: record } : {}, query: compact({ q: text('q'), source: text('source'),
+      order: pick(['updated', 'created', 'oldest'] as const, query?.order), view: pick(['board', 'list'] as const, query?.view) }) }
     case 'overview': case 'source': return { page }
     case 'trigger': return record ? { page, id: record, query: compact({ trigger: text('trigger') }) }
       : { page, query: compact({ filter: pick(THREAD_FILTERS, query?.filter) }) }

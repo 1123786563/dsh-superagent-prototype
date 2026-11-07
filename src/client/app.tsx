@@ -1,12 +1,13 @@
 /** Root panel shell: header with global search and glossary, top-level navigation tabs, and active route view. */
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import type { SearchView } from './api.ts'
-import { Button, Dot, Icon, Input, Modal, SegmentedTabs } from './controls.tsx'
+import { Button, Dot, Icon, Input, Modal, type IconName } from './controls.tsx'
 import type { DeploymentForm } from './deployment.tsx'
 import { EvalStatus } from './eval.tsx'
 import { ExecutionStatus } from './execution.tsx'
 import { ticketMark } from './marks.ts'
 import { GLOSSARY, GLOSSARY_VALUES, en, zh, type DshSuperagentKey } from './locales.ts'
+import { BoardPage } from './board.tsx'
 import { OverviewPage } from './overview.tsx'
 import { PanelProvider, usePanel, usePanelData } from './provider.tsx'
 import { HOME, TABS, initialLocation, lastSettingsGroup, remember, routeLabel, settingsRoute, type Location, type Route,
@@ -100,6 +101,7 @@ function SearchResults({ result, query, onClose }: { result: SearchView; query: 
 
 function Header({ masterId }: { masterId: string | undefined }) {
   const { t, call, openSession, notify } = usePanel()
+  const { setup } = usePanelData()
   const [glossary, setGlossary] = useState(false)
   const [query, setQuery] = useState('')
   const [result, setResult] = useState<{ query: string; value: SearchView }>()
@@ -122,7 +124,9 @@ function Header({ masterId }: { masterId: string | undefined }) {
       failure => { if (request === latest.current) notify(errorText(failure)) })
   }
   return <header className="dt-head">
-    <div className="dt-head-title"><h1 className="dt-title">{t('title')}</h1></div>
+    <div className="dt-head-title"><span className="dt-workbench-mark"><Icon name="board" size={18} /></span>
+      <h1 className="dt-title">{t('title')}</h1><span className="dt-workbench-separator">/</span>
+      <span className="dt-workbench-repository" title={setup?.accounts?.repository}>{setup?.accounts?.repository ?? t('board.repository')}</span></div>
     <div className="dt-toolbar">
       <form ref={search} className="dt-search" role="search" onSubmit={submit} onKeyDown={event => { if (event.key === 'Escape') show() }}>
         <Input type="search" icon={<Icon name="search" />} value={query} placeholder={t('searchPlaceholder')} aria-label={t('searchLabel')}
@@ -146,6 +150,7 @@ function Pages({ route, openTab, deploymentForm }: { route: Route; openTab: (tab
   const waiting = error ? <p className="dt-error" role="alert">{error.message}</p> : <p className="dt-hint">{t('loading')}</p>
   const page = (() => {
     switch (route.page) {
+      case 'board': return <BoardPage route={route} />
       case 'overview': return <OverviewPage />
       case 'source': return <SourceStatus />
       case 'trigger': return route.id !== undefined ? <ThreadPage key={route.id} id={route.id} target={route.query?.trigger} />
@@ -158,13 +163,34 @@ function Pages({ route, openTab, deploymentForm }: { route: Route; openTab: (tab
         deploymentForm={deploymentForm} /> : waiting
     }
   })()
-  return <div className="dt-page">
-    <div className="dt-column">
-      <Header masterId={state?.masterId} />
-      {error && state && <p className="dt-error" role="status">{error.message}</p>}
-      <SegmentedTabs className="dt-tabs" label={t('pagesLabel')} value={route.page} onChange={openTab}
-        items={TABS.map(value => ({ value, label: t(`tab.${value}`), id: `dt-tab-${value}`, panelId: 'dt-page' }))} />
-      <main id="dt-page" role="tabpanel" aria-labelledby={`dt-tab-${route.page}`} className="dt-main">{page}</main>
+  const icons: Record<Tab, IconName> = { board: 'board', overview: 'overview', source: 'source', trigger: 'inbox', eval: 'shield',
+    execution: 'session', settings: 'settings' }
+  return <div className="dt-workbench">
+    <Header masterId={state?.masterId} />
+    <div className="dt-workbench-body">
+      <nav className="dt-workbench-nav" aria-label={t('pagesLabel')}>
+        <p className="dt-workbench-nav-label">{t('board.workspace')}</p>
+        <div role="tablist" aria-orientation="vertical" aria-label={t('pagesLabel')} onKeyDown={event => {
+          if (event.target instanceof HTMLElement && event.target.getAttribute('role') === 'tab') {
+            const index = TABS.indexOf(route.page)
+            const next = event.key === 'ArrowDown' ? (index + 1) % TABS.length : event.key === 'ArrowUp'
+              ? (index + TABS.length - 1) % TABS.length : event.key === 'Home' ? 0 : event.key === 'End' ? TABS.length - 1 : undefined
+            if (next !== undefined) { event.preventDefault(); const tab = TABS[next]!; openTab(tab)
+              requestAnimationFrame(() => document.getElementById(`dt-tab-${tab}`)?.focus()) }
+          }
+        }}>
+          {TABS.map(value => <button key={value} type="button" role="tab" id={`dt-tab-${value}`} aria-controls="dt-page"
+            aria-selected={value === route.page} tabIndex={value === route.page ? 0 : -1} className="dt-workbench-nav-item"
+            onClick={() => openTab(value)}><Icon name={icons[value]} size={16} /><span>{t(`tab.${value}`)}</span></button>)}
+        </div>
+        <div className="dt-workbench-nav-note"><Icon name="shield" size={14} /><span>{t('board.auto')}</span></div>
+      </nav>
+      <div className="dt-workbench-content">
+        {error && state && <p className="dt-error dt-workbench-error" role="status">{error.message}</p>}
+        {route.page === 'board' ? <main id="dt-page" role="tabpanel" aria-labelledby="dt-tab-board" className="dt-board-main">{page}</main>
+          : <div className="dt-page"><div className="dt-column"><main id="dt-page" role="tabpanel"
+            aria-labelledby={`dt-tab-${route.page}`} className="dt-main">{page}</main></div></div>}
+      </div>
     </div>
   </div>
 }

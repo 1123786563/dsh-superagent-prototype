@@ -3,8 +3,12 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
-import { THREAD_FILTERS, TICKET_FILTERS, type Api, type ApiResponse, type RouteParams } from './api.ts'
+import { credentialKey } from '@deepseek-ai/dsh-credentials'
+import type { ApiKeyRecord, CredentialProvider } from '@deepseek-ai/dsh-credentials'
+import { THREAD_FILTERS, TICKET_FILTERS, type Api, type ApiResponse, type CorsairConnectionInput, type CorsairConnectionView, type RouteParams } from './api.ts'
 import { sourceSkills } from './context.ts'
+import { BOARD_COLUMNS } from './board.ts'
+import { board } from './views/board.ts'
 import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types'
 import { PromptConflict, SKILL_NAME, SKILL_PREFIX, TEAM_SECTIONS, builtInBase, builtInParts, defaultPrompts, savePrompts, type Prompts }
   from './prompts.ts'
@@ -17,6 +21,7 @@ import type { DshExecutor } from '../executor/dsh.ts'
 import type { Health } from '../sources/host.ts'
 import type { SourceRegistry } from '../sources/registry.ts'
 import type { Sessions } from './sessions.ts'
+import { PullMergeError } from '../sources/github-pull.ts'
 import type { Store } from './store.ts'
 import type { TextCache } from './cache.ts'
 import type { LinkTarget, ViewHost } from './views/records.ts'
@@ -30,6 +35,7 @@ import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
 
 export interface HttpHost {
   readonly store: Store
+  readonly credentials: Pick<CredentialProvider, 'readRecord' | 'modifyRecord' | 'deleteRecord'>
   /** Feishu message links resolved since startup, used by search to match AppLink URLs. */
   readonly sourceLinks: Pick<TextCache, 'entries'>
   readonly sources: SourceRegistry
@@ -53,12 +59,14 @@ export interface HttpHost {
   checkSetup(): void
   requestPass(): void
   models(): Promise<ModelCatalog>
+  /** Performs the confirmed, user-only PR merge for an open Ticket after checking GitHub's current merge state. */
+  mergeTicket(id: string): Promise<{ merged: true; number: number }>
 }
 /**
- * Represents a client-facing 400 or 404 error raised during management route parsing or lookup.
+ * Represents a client-facing 400, 404, or 409 error raised during management route parsing, lookup, or conflict handling.
  * Route handlers throw it when request bodies are malformed or target records are missing, and registerHttp serializes its status and message in the HTTP response.
  */
-class RouteError extends Error { constructor(readonly status: 400 | 404, message: string) { super(message) } }
+class RouteError extends Error { constructor(readonly status: 400 | 404 | 409, message: string) { super(message) } }
 async function readBody(req: IncomingMessage, maxBytes = 128 * 1024): Promise<unknown> {
   let size = 0; const chunks: Buffer[] = []
   for await (const chunk of req) {
@@ -85,6 +93,7 @@ function failure(error: unknown): [number, Record<string, unknown>] {
   }
   if (error instanceof SetupError) return [400, { error: error.message, setup: error.problem }]
   if (error instanceof RouteError) return [error.status, { error: error.message }]
+  if (error instanceof PullMergeError) return [409, { error: error.message }]
   if (error instanceof UserError) return [error.missing ? 404 : 400, { error: error.message, code: error.code, values: error.values }]
   if (error instanceof SettingsConflict || error instanceof PromptConflict) return [409, { error: error.message }]
   return [500, { error: error instanceof Error ? error.message : String(error) }]
@@ -138,6 +147,9 @@ type Routes = { [K in keyof Api]: (input: Input<K>) => ApiResponse<K> | Promise<
 const offset = z.coerce.number().int().nonnegative().catch(0)
 const limit = (fallback: number, max: number) => z.coerce.number().int().positive().catch(fallback).transform(value => Math.min(max, value))
 const TicketsQuery = z.object({ state: z.enum(TICKET_FILTERS).catch('open'), offset, limit: limit(20, 1000) })
+const BoardQuery = z.object({ q: z.string().optional(), source: z.string().optional(),
+  order: z.enum(['updated', 'created', 'oldest']).catch('updated'), column: z.enum(BOARD_COLUMNS).optional().catch(undefined),
+  offset, limit: limit(20, 100) })
 const ThreadsQuery = z.object({ filter: z.enum(THREAD_FILTERS).catch('subscribed'), offset, limit: limit(20, 1000) })
 const ThreadQuery = z.object({ limit: limit(50, 100), before: z.string().optional(), around: z.string().optional() })
 const DecisionsQuery = z.object({ kind: z.string().default(''), window: z.literal('24h').optional().catch(undefined), offset,
@@ -147,12 +159,40 @@ const PromptsQuery = z.object({ revision: count.optional(), offset: count.defaul
 const SourceBlock = z.templateLiteral(['source:', z.string().regex(/^[a-z][a-z0-9-]*$/)])
 const SettingsBlockSchema = z.union([z.enum(['policy', 'eval', 'executor']), SourceBlock])
 const SaveRequest = z.object({ value: z.unknown(), revision: z.number().int().nonnegative() })
+const CORSAIR_KEY = credentialKey('dsh-superagent', 'corsair-mcp')
+const CORSAIR_URL_ENV = 'CORSAIR_MCP_URL'
+const CorsairInput = z.object({
+  endpoint: z.string().trim().url().refine(value => {
+    const url = new URL(value)
+    return url.protocol === 'https:' && (url.hostname === 'corsair.dev' || url.hostname.endsWith('.corsair.dev')
+      || url.hostname === 'corsair.cloud' || url.hostname.endsWith('.corsair.cloud')) && url.pathname === '/mcp'
+      && !url.href.split('//')[1]?.split('/')[0]?.includes('@') && !url.search && !url.hash
+  }, 'Use a Corsair HTTPS MCP endpoint ending in /mcp, without credentials or query parameters'),
+  apiKey: z.string().trim().min(1).max(4096),
+})
+function corsairRecord(runtime: HttpHost): Promise<Awaited<ReturnType<CredentialProvider['readRecord']>>> {
+  return runtime.credentials.readRecord(CORSAIR_KEY)
+}
+async function corsairView(runtime: HttpHost): Promise<CorsairConnectionView> {
+  const record = await corsairRecord(runtime)
+  if (record?.kind !== 'api-key') return { configured: false }
+  const endpoint = record.env?.[CORSAIR_URL_ENV]
+  return record.key && endpoint ? { configured: true, endpoint } : { configured: false }
+}
 
 function routes(runtime: HttpHost): Routes {
   const { store } = runtime
   const ticket = (id: string) => { if (!store.tickets.get(id)) throw new RouteError(404, 'Ticket not found'); return id }
   const promptBody = (input: { body: (maxBytes?: number) => Promise<unknown> }) => input.body(4 * runtime.machine.promptMaxChars.get() + 4096)
   return {
+    'GET corsair': () => corsairView(runtime),
+    'PUT corsair': async ({ body }) => {
+      const input = CorsairInput.parse(await body()) as CorsairConnectionInput
+      await runtime.credentials.modifyRecord(CORSAIR_KEY, async () => ({ kind: 'api-key', key: input.apiKey,
+        env: { [CORSAIR_URL_ENV]: input.endpoint } } satisfies ApiKeyRecord))
+      return corsairView(runtime)
+    },
+    'DELETE corsair': async () => { await runtime.credentials.deleteRecord(CORSAIR_KEY); return { configured: false } },
     'GET state': () => stateView(runtime),
     'GET overview': () => overview(views(runtime), runtime.health, policyVersion(store.settings()),
       executorLoad(store, runtime.executor.activeCount()), runtime.setupProblem ?? runtime.feishuProblem),
@@ -185,6 +225,8 @@ function routes(runtime: HttpHost): Routes {
       return decisionList(views(runtime), kind.split(',').filter(Boolean), offset, limit, since)
     },
     'POST decisions/:id/dismiss': ({ params }) => { runtime.engine.dismiss(params.id); return { dismissed: true } },
+    'GET board': ({ query }) => ({ ...board(views(runtime), BoardQuery.parse(query)),
+      ...runtime.configured() ? { repository: runtime.deployment.repository } : {} }),
     'GET tickets': ({ query }) => {
       const { state, offset, limit } = TicketsQuery.parse(query)
       return ticketList(views(runtime), state, offset, limit)
@@ -192,6 +234,7 @@ function routes(runtime: HttpHost): Routes {
     'GET tickets/:id': ({ params }) => ticketPage(runtime, params.id),
     'POST tickets/:id/retry': ({ params }) => { const id = ticket(params.id); runtime.engine.retryTicket(id); return { retried: true } },
     'POST tickets/:id/stop': ({ params }) => { const id = ticket(params.id); runtime.engine.stopTicket(id); return { stopped: true } },
+    'POST tickets/:id/merge': ({ params }) => runtime.mergeTicket(ticket(params.id)),
     'POST executor/pause': async ({ body }) => runtime.settings.pause(z.object({ paused: z.boolean() }).parse(await body()).paused, 'panel'),
     'PUT settings/:block': async ({ params, body }) => {
       const block = SettingsBlockSchema.parse(params.block)

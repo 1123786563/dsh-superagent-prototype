@@ -35,7 +35,9 @@ export async function settle() {
   })
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
 }
+/** Existing panel scenarios start at Overview; Board scenarios opt in with at({ page: 'board' }). */
 export async function mount(dictionary: Record<string, string> = zh) {
+  if (!sessionStorage.getItem('dsh-superagent/route')) at({ page: 'overview' })
   container = document.createElement('div'); document.body.append(container)
   root = createRoot(container)
   await act(async () => { root!.render(<Panel t={translator(dictionary)} />) })

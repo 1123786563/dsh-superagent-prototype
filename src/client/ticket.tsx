@@ -105,11 +105,16 @@ function MandateDetails({ ticket, actor }: { ticket: TicketPageView; actor: stri
   </Section>
 }
 
-export function TicketPage({ id }: { id: string }) {
+function EmbeddedHead({ title, children }: { title: ReactNode; children?: ReactNode }) {
+  return <div className="dt-page-title"><h2>{title}</h2>{children && <span className="dt-actions">{children}</span>}</div>
+}
+
+export function TicketPage({ id, embedded = false, onChanged }: { id: string; embedded?: boolean; onChanged?: () => Promise<unknown> }) {
   const { t, call } = usePanel()
   const { data, error, reload } = usePoll(() => call('GET tickets/:id', { id }), [id])
-  const after = async (request: Promise<unknown>) => { await request; await reload() }
-  if (!data) return <><PageHead
+  const after = async (request: Promise<unknown>) => { await request; await reload(); await onChanged?.() }
+  const Heading = embedded ? EmbeddedHead : PageHead
+  if (!data) return <><Heading
     title={t('term.ticket')} />{error instanceof ApiError && error.missing ? <Hint>{t('ticketNotFound')}</Hint> : <LoadState
       error={error} loading />}</>
   const status = ticketMark(t, data)
@@ -126,13 +131,13 @@ export function TicketPage({ id }: { id: string }) {
   })()
   const channel = data.channels[0]
   return <>
-    <PageHead title={data.title}>
+    <Heading title={data.title}>
       {opening?.url && <ActionLink href={opening.url}>{t('openThread', { source: valueLabel(t, 'source', opening.source) })}</ActionLink>}
       {data.actions.retry && <ConfirmButton variant="outline" icon="refresh" label={t('retry')} title={t('retryTitle')}
         message={t('retryConfirm', { title: data.title })}
         onConfirm={() => after(call('POST tickets/:id/retry', { id }))} />}
       {data.sessionId && <SessionButton variant="outline" sessionId={data.sessionId} />}
-    </PageHead>
+    </Heading>
     {error && <LoadState error={error} loading={false} />}
     <div className="dt-row-meta dt-status-line">
       <StageMark state={status.dot} icon={status.icon} label={status.label} />

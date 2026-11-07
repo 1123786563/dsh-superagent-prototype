@@ -12,10 +12,11 @@ Opening the panel answers three questions, in this order:
 
 ## Tabs
 
-The tabs follow the workflow: **Overview**, **Source**, **Trigger**, **Eval**, **Execution**, and **Settings**. Until repository and account setup succeeds, Overview shows what is missing and links to the relevant setting.
+The workspace opens on **Board**, with **Overview**, **Source**, **Trigger**, **Eval**, **Execution**, and **Settings** available in the side navigation (a horizontal navigation row on narrow screens). Until repository and account setup succeeds, the board reports that setup is pending; Overview shows what is missing and links to the relevant setting.
 
 | Tab | Shows |
 | --- | --- |
+| Board | Five derived columns: Queued, In progress, Needs attention, Waiting for events, and Ended. Search, Source filtering, ordering, a list view and per-column pagination operate on real Ticket data. Click a card for side details without leaving the board; Escape closes the details. Ended cards keep their actual outcome. Stages follow execution rather than arbitrary drag-and-drop edits |
 | Overview | Tickets needing action, system problems, activity counts for the last 24 hours, and Executor load. Each block links to its detailed page |
 | Source | Source state, setup problems and non-zero counts. Filtered Triggers and dropped messages cover the same 24-hour window as Overview |
 | Trigger | Threads filtered by Subscribed, Evaluating, New Triggers in 24 h, or All Threads. Each Thread shows its Triggers newest first, Decisions and Subscriptions |

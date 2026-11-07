@@ -1,0 +1,18 @@
+diff --git a/pkg/runner/run_context.go b/pkg/runner/run_context.go
+index f4e5c75..39e1b1b 100644
+--- a/pkg/runner/run_context.go
++++ b/pkg/runner/run_context.go
+@@ -150,8 +150,12 @@ func (rc *RunContext) GetBindsAndMounts() ([]string, map[string]string) {
+ 		binds = append(binds, hostEnv.ToContainerPath(rc.Config.Workdir)+":"+ext.ToContainerPath(rc.Config.Workdir))
+ 		return binds, mounts
+ 	}
++	toolCacheVolume := os.Getenv("DSH_ACT_TOOLCACHE_VOLUME")
++	if toolCacheVolume == "" {
++		toolCacheVolume = "act-toolcache"
++	}
+ 	mounts := map[string]string{
+-		"act-toolcache": "/opt/hostedtoolcache",
++		toolCacheVolume: "/opt/hostedtoolcache",
+ 		name + "-env":   ext.GetActPath(),
+ 	}
+ 

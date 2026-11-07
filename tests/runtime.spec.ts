@@ -361,6 +361,42 @@ it('lists each ticket with the Threads it subscribes to, as their Sources descri
   expect(line().threads.find(thread => thread.key === 'github:42')!.facts).toEqual({ number: { value: '#42' } })
 })
 
+it('offers the merge action only while the followed PR reads mergeable, and merges it through the panel route with a fresh check', async () => {
+  const { sessionId, ticket } = await acceptedTicket()
+  await runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'pr open', pr_number: 42 })
+  const api = (state: Record<string, unknown>) => vi.spyOn(Commands.prototype, 'api')
+    .mockImplementation(async (schema, path, ...flags) => {
+      // The state fetch passes a schema first, then the path; the merge call passes the raw path and flags.
+      if (path === 'pulls/42' && flags.length === 0) return { state: 'open', merged: false, draft: false, mergeable: true,
+        mergeable_state: 'clean', head: { sha: 'head-1' }, ...state } as never
+      if (schema === 'pulls/42/merge') return JSON.stringify({ merged: true, message: 'Pull Request successfully merged' }) as never
+      throw new Error(`unexpected api call: ${String(schema)} ${String(path)}`)
+    })
+  const row = () => ticketList(viewsOf(runtime), 'working', 0, 20).items.find(item => item.id === ticket.id)!
+  const patch = (meta: Record<string, unknown>) => runtime.store.threads.patchMeta('github:42', meta)
+  // No merge fact exists yet: no button. The endpoint still rechecks and refuses a PR that is blocked now.
+  expect(row().actions).not.toHaveProperty('merge')
+  const blocked = api({ mergeable_state: 'blocked' })
+  await expect(runtime.mergeTicket(ticket.id)).rejects.toThrow('no longer ready to merge')
+  expect(blocked.mock.calls.some(([first]) => first === 'pulls/42/merge')).toBe(false)
+  blocked.mockRestore()
+  patch({ pullState: 'open', mergeable: true, mergeableState: 'clean', isDraft: false })
+  expect(row().actions).toMatchObject({ merge: 42 })
+  // A blocked PR loses the action, and a stale merge attempt returns the conflict the panel surfaces.
+  patch({ mergeableState: 'blocked' })
+  expect(row().actions).not.toHaveProperty('merge')
+  patch({ mergeableState: 'clean' })
+  const stale = api({ mergeable_state: 'blocked' })
+  await expect(runtime.mergeTicket(ticket.id)).rejects.toThrow('no longer ready to merge')
+  stale.mockRestore()
+  // The host repeats the fetch and sends its head SHA with the merge request.
+  const success = api({})
+  await expect(runtime.mergeTicket(ticket.id)).resolves.toEqual({ merged: true, number: 42 })
+  expect(success).toHaveBeenCalledWith('pulls/42/merge', '-X', 'PUT', '-f', 'sha=head-1', '-f', 'merge_method=merge')
+  expect(runtime.store.tickets.get(ticket.id)?.follows).toContainEqual(expect.objectContaining({ thread: 'github:42', closed: expect.objectContaining({ outcome: 'merged' }) }))
+  success.mockRestore()
+})
+
 it('shows a message that carries JSON, with or without a label, as its label and values on lines', () => {
   const text = `GitHub PR #7 CI: ${JSON.stringify({ head: 'abc1234', checks: [{ name: 'e2e', status: 'completed', conclusion: 'failure' }, { name: 'lint', status: 'in_progress', conclusion: null }], statuses: [] })}`
   expect(readable(text)).toBe('GitHub PR #7 CI\nhead: abc1234\nchecks:\n- e2e · completed · failure\n- lint · in_progress\nstatuses: ')

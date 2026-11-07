@@ -1,0 +1,4 @@
+# Corsair credentials are managed by the dsh-superagent Connectors panel and read inside each Worker Session.
+- insert:
+    - id: corsair-worker
+      name: dsh-superagent/corsair-worker

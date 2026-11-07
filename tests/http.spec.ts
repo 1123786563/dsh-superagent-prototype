@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { registerHttp } from '../src/app/http.ts'
 import { PromptConflict } from '../src/app/prompts.ts'
@@ -6,6 +6,8 @@ import { SettingsConflict } from '../src/app/settings.ts'
 import type { HttpHost } from '../src/app/http.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { SetupError } from '../src/setup.ts'
+import type { Ticket } from '../src/core/index.ts'
+import { PullMergeError } from '../src/sources/github-pull.ts'
 
 type Handler = (req: unknown, res: unknown) => Promise<void>
 type Headers = Record<string, string | undefined>
@@ -24,6 +26,35 @@ function serve(runtime: Partial<Record<keyof HttpHost, unknown>>, host = '127.0.
     return { status, body: JSON.parse(text) as Record<string, unknown> }
   }
 }
+
+it('serves the board with normalized query defaults, column paging, and an optional configured repository', async () => {
+  const tickets: Ticket[] = Array.from({ length: 105 }, (_, index) => ({ id: `t${index.toString().padStart(3, '0')}`,
+    title: index === 104 ? 'Needle' : 'Task', decisionId: 'd', channels: [], assignments: [], inputs: [], undelivered: [],
+    createdAt: '2026-01-01', updatedAt: '2026-01-01', origin: { triggerId: 'e', triggerIds: ['e'] },
+    mandate: { strength: 'explicit', policyVersion: 'v', basis: { via: 'listed' }, actor: { source: 'github', id: 'alice' }, scope: '' } }))
+  let configured = false
+  const call = serve({ store: { settings: () => SettingsSchema.parse({}), tickets: { list: () => [...tickets] },
+    read: { subscribedThreads: () => [] } }, sources: { instances: () => [{ id: 'github' }], kind: () => undefined },
+    links: () => () => ({ url: '', label: { zh: '', en: '' } }), configured: () => configured,
+    deployment: { repository: 'org/repo' } })
+  const initial = await call('GET', 'board?offset=80')
+  expect(initial.status).toBe(200)
+  expect(initial.body).not.toHaveProperty('repository')
+  expect(initial.body).toMatchObject({ total: 105, columns: [{ id: 'queued', total: 105, next_offset: 20 },
+    { id: 'working', total: 0 }, { id: 'person', total: 0 }, { id: 'idle', total: 0 }, { id: 'ended', total: 0 }] })
+  expect((await call('GET', 'board?column=queued&offset=100&limit=2')).body).toMatchObject({ columns: [
+    { items: [{ id: 't100' }, { id: 't101' }], next_offset: 102 }, {}, {}, {}, {},
+  ] })
+  expect((await call('GET', 'board?limit=1000')).body).toMatchObject({ columns: [{ next_offset: 100 }, {}, {}, {}, {}] })
+  expect((await call('GET', 'board?limit=bad&offset=-1&order=bad&column=bad')).body).toEqual(initial.body)
+  expect((await call('GET', 'board?limit=0')).body).toEqual(initial.body)
+  expect((await call('GET', 'board?q=needle&source=github&limit=1')).body).toMatchObject({ total: 1,
+    columns: [{ total: 1, items: [{ id: 't104' }], next_offset: null }, {}, {}, {}, {}] })
+  configured = true
+  expect((await call('GET', 'board')).body.repository).toBe('org/repo')
+  expect(await call('GET', 'board', undefined, { 'x-orchestrator-request': undefined }))
+    .toMatchObject({ status: 403 })
+})
 
 it('answers each kind of failure with its own status', async () => {
   const saves: unknown[] = []
@@ -65,6 +96,19 @@ it('decodes path parameters and parses each route\'s query', async () => {
   // Invalid offsets default to 0, and limits above the route maximum are clamped.
   expect(await call('GET', 'decisions?kind=accept%2Creopen&limit=500&offset=x&window=24h')).toEqual({ status: 200, body: { items: [], next_offset: null } })
   expect(seen).toEqual(['feishu:oc_1:om/root', { filter: { kinds: ['accept', 'reopen'], since: expect.any(String) }, offset: 0, limit: 200 }])
+})
+
+it('exposes ticket PR merge as a user route and serializes stale merge conflicts as 409', async () => {
+  const mergeTicket = vi.fn(async (id: string) => {
+    if (id === 'stale') throw new PullMergeError('PR #42 is no longer ready to merge')
+    return { merged: true as const, number: 42 }
+  })
+  const call = serve({ store: { tickets: { get: (id: string) => id === 't1' || id === 'stale' ? {} as Ticket : undefined } }, mergeTicket })
+  expect(await call('POST', 'tickets/t1/merge')).toEqual({ status: 200, body: { merged: true, number: 42 } })
+  expect(mergeTicket).toHaveBeenCalledOnce()
+  expect(mergeTicket).toHaveBeenCalledWith('t1')
+  expect(await call('POST', 'tickets/stale/merge')).toEqual({ status: 409, body: { error: 'PR #42 is no longer ready to merge' } })
+  expect(await call('POST', 'tickets/missing/merge')).toEqual({ status: 404, body: { error: 'Ticket not found' } })
 })
 
 it('answers only a same-origin request from the panel on the loopback address', async () => {

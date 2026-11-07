@@ -72,14 +72,15 @@ export function ClampText({ text }: { text: string }) {
   </>
 }
 
-export function ConfirmButton({ label, title, message, onConfirm, variant = 'ghost', icon }: {
-  label: string; title: string; message: string; onConfirm: () => Promise<unknown>; variant?: 'ghost' | 'outline'; icon?: IconName
+export function ConfirmButton({ label, title, message, onConfirm, variant = 'ghost', icon, iconOnly = false }: {
+  label: string; title: string; message: string; onConfirm: () => Promise<unknown>; variant?: 'ghost' | 'outline'; icon?: IconName; iconOnly?: boolean
 }) {
   const { t } = usePanel()
   const [open, setOpen] = useState(false)
   const confirm = useAction(onConfirm)
   return <>
-    <Button variant={variant} size="sm" icon={icon && <Icon name={icon} size={14} />} onClick={() => setOpen(true)}>{label}</Button>
+    <Button variant={variant} size="sm" icon={icon && <Icon name={icon} size={14} />} aria-label={iconOnly ? label : undefined}
+      title={iconOnly ? label : undefined} onClick={() => setOpen(true)}>{iconOnly ? undefined : label}</Button>
     <Modal open={open} onClose={() => setOpen(false)} title={title} closeLabel={t('close')} description={message}
       footer={<>
         <Button variant="ghost" onClick={() => setOpen(false)}>{t('cancel')}</Button>
@@ -88,11 +89,13 @@ export function ConfirmButton({ label, title, message, onConfirm, variant = 'gho
       </>} />
   </>
 }
-export function SessionButton({ sessionId, label,
-  variant = 'ghost' }: { sessionId: string; label?: string; variant?: 'ghost' | 'outline' }) {
+export function SessionButton({ sessionId, label, iconOnly = false,
+  variant = 'ghost' }: { sessionId: string; label?: string; variant?: 'ghost' | 'outline'; iconOnly?: boolean }) {
   const { t, openSession, notify } = usePanel()
-  return <Button variant={variant} size="sm" icon={<Icon name="session" size={14} />}
-    onClick={() => { openSession(sessionId).catch(error => notify(errorText(error))) }}>{label ?? t('openSession')}</Button>
+  const text = label ?? t('openSession')
+  return <Button variant={variant} size="sm" icon={<Icon name="session" size={14} />} aria-label={iconOnly ? text : undefined}
+    title={iconOnly ? text : undefined}
+    onClick={() => { openSession(sessionId).catch(error => notify(errorText(error))) }}>{iconOnly ? undefined : text}</Button>
 }
 export function ExternalLink({ href, children, icon = 'external' }: { href: string; children: ReactNode; icon?: IconName }) {
   return <a className="dt-inline-link dt-icon-link" href={href} {...external}><Icon name={icon} size={13} />{children}</a>

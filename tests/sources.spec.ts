@@ -570,6 +570,27 @@ describe('github source', () => {
     routes['pulls/9'] = { ...pr, state: 'closed', merged: true, merged_at: '2026-09-09T00:00:00Z' }
     await pollRound(h)
     expect(h.store.tickets.get('t9')).toMatchObject({ ended: { outcome: 'merged' } })
+    // The merge projection clears once the PR ends.
+    expect(h.store.threads.get('github:9')!.meta).toMatchObject({ pullState: 'closed', mergeable: false })
+    h.store.close()
+  })
+  it('projects mergeable open pull requests and clears the facts when the merge state changes', async () => {
+    const h = host()
+    h.store.tickets.save({ ...openTicket('t9'), ...pulled(9) })
+    h.store.threads.save({ key: 'github:9', ref: { source: 'github', id: '9' }, createdAt: '', lastAt: new Date().toISOString(),
+      subscriptions: ['t9'], correlated: [], pending: [], meta: { number: 9, isPr: true, title: 'Fix' } })
+    const pr = { number: 9, title: 'Fix', state: 'open', html_url: 'https://github.com/acme/widgets/pull/9',
+      user: { login: 'agent-bot' }, head: { sha: 'abc', ref: 'agent/nine', repo: { full_name: 'acme/widgets' } } }
+    const routes: Record<string, unknown> = { notifications: [], 'pulls/9': pr }
+    github(h, routes)
+    await pollRound(h)
+    expect(h.store.threads.get('github:9')!.meta).toMatchObject({ pullState: 'open' })
+    routes['pulls/9'] = { ...pr, mergeable: true, mergeable_state: 'clean' }
+    await pollRound(h)
+    expect(h.store.threads.get('github:9')!.meta).toMatchObject({ pullState: 'open', mergeable: true, mergeableState: 'clean' })
+    routes['pulls/9'] = { ...pr, mergeable: true, mergeable_state: 'clean', draft: true }
+    await pollRound(h)
+    expect(h.store.threads.get('github:9')!.meta).toMatchObject({ pullState: 'open', mergeable: true, isDraft: true })
     h.store.close()
   })
   it('reads each notified Issue alone and reads a failed one again next round, from where it was', async () => {

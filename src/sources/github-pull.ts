@@ -10,9 +10,18 @@ const PullSchema = z.looseObject({
   title: z.string().optional(), state: z.string(), html_url: z.string(), user: UserSchema,
   body: z.string().nullish(), created_at: z.string().optional(),
   merged: z.boolean().optional(), merged_at: z.string().nullish(), closed_at: z.string().nullish(), auto_merge: z.unknown().optional(),
+  draft: z.boolean().optional(), mergeable: z.boolean().nullish(), mergeable_state: z.string().optional(),
   head: z.looseObject({ sha: z.string(), ref: z.string(), repo: z.looseObject({ full_name: z.string() }).nullish() }),
 })
 export type Pull = z.infer<typeof PullSchema> & { number: number }
+export const PullMergeStateSchema = z.object({ state: z.string(), merged: z.boolean(), draft: z.boolean(),
+  mergeable: z.boolean().nullable(), mergeable_state: z.string(), head: z.object({ sha: z.string() }) })
+export const PullMergeResultSchema = z.object({ merged: z.boolean(), message: z.string().optional() })
+/**
+ * Represents a refused PR merge: eligibility, existence, or GitHub's own conflict status failed the fresh pre-merge check,
+ * and registerHttp serializes its message as the panel's 409 response.
+ */
+export class PullMergeError extends Error { constructor(message: string) { super(message); this.name = 'PullMergeError' } }
 export const readPull = async (ctx: SourceContext, number: number, signal?: AbortSignal): Promise<Pull> =>
   ({ ...await ctx.commands.withSignal(signal).api(PullSchema, `pulls/${number}`), number })
 const pullNumber = (thread: string): number | undefined => thread.startsWith(`${SOURCE}:`) ? Number(thread.slice(SOURCE.length + 1)) : undefined
@@ -64,7 +73,10 @@ export async function observePull(ctx: SourceContext, pr: Pull): Promise<boolean
     const reopened = ticket?.follows?.some(item => item.thread === `${SOURCE}:${pr.number}` && item.closed)
     if (ticket && (reopened || pullsOf(ticket, true).every(number => number === pr.number))) claimPull(ctx, ticket.id, pr)
   }
-  ctx.threads.describe(`github:${pr.number}`, { facts: { autoMerge: !ended && pr.auto_merge != null ? AUTO_MERGE_ON : null } })
+  const thread = `github:${pr.number}`
+  ctx.threads.patch(thread, { pullState: pr.state, mergeable: !ended ? pr.mergeable : false,
+    mergeableState: pr.mergeable_state, isDraft: pr.draft })
+  ctx.threads.describe(thread, { facts: { autoMerge: !ended && pr.auto_merge != null ? AUTO_MERGE_ON : null } })
   return ended
 }
 function bind(ctx: SourceContext, ticketId: string, pr: Pull, own: boolean): void {

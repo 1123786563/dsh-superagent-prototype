@@ -10,13 +10,14 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-subprocess'
+import type {} from '@deepseek-ai/dsh-credentials'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { lockSync } from 'proper-lockfile'
 import { Engine, key, reasonText, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
 import { SourceRegistry } from '../sources/registry.ts'
-import { Commands } from '../infra/commands.ts'
+import { CliError, Commands } from '../infra/commands.ts'
 import type { Deployment, Machine } from '../deployment.ts'
 import { environmentOf, ticketEnvironment, type Variable } from './execution-environment.ts'
 import type { SetupProblem } from '../setup.ts'
@@ -33,7 +34,7 @@ import { registerHttp, type HttpHost } from './http.ts'
 import type { LinkTarget } from './views/records.ts'
 import { candidateCard, repliedTo, sourceLink, type LinkHost } from './links.ts'
 import { eventNotice, followupNotice } from './notices.ts'
-import { pullEndNotices } from '../sources/github-pull.ts'
+import { pullEndNotices, pullOf, PullMergeError, PullMergeResultSchema, PullMergeStateSchema } from '../sources/github-pull.ts'
 import { HealthBoard } from '../infra/health.ts'
 import { Outbox } from './outbox.ts'
 import { Passes } from './passes.ts'
@@ -185,6 +186,42 @@ export class Runtime extends Service implements SourceHost {
     const links = resolved ? { repository: resolved.repository, ...(resolved.feishu ? { feishu: resolved.feishu } : {}) } : {}
     return channel => this.sources.link(channel, links)
   }
+  /** Merges the current, explicitly followed GitHub PR after rechecking GitHub's merge state and head SHA. This remains a user-only panel action. */
+  async mergeTicket(ticketId: string): Promise<{ merged: true; number: number }> {
+    if (!this.setup.configured()) throw new PullMergeError('GitHub setup is not ready')
+    const instance = this.sources.instance('github')
+    if (!instance?.enabled) throw new PullMergeError('The GitHub Source is disabled')
+    const ticket = this.store.tickets.get(ticketId)
+    if (!ticket || ticket.ended) throw new PullMergeError('Ticket is not open')
+    const number = pullOf(ticket)
+    const follow = number && ticket.follows?.find(item => !item.closed && item.thread === `github:${number}`)
+    const thread = follow && this.store.threads.get(follow.thread)
+    if (!Number.isSafeInteger(number) || number! <= 0 || !thread || thread.meta.isPr !== true) {
+      throw new PullMergeError('Ticket has no open GitHub pull request')
+    }
+    let pr: ReturnType<typeof PullMergeStateSchema.parse>
+    try { pr = await this.commands.api(PullMergeStateSchema, `pulls/${number}`) }
+    catch (error) {
+      if (error instanceof CliError && error.code === 404) throw new PullMergeError(`PR #${number} no longer exists or is inaccessible`)
+      throw error
+    }
+    if (pr.state !== 'open' || pr.merged || pr.draft || pr.mergeable !== true || pr.mergeable_state !== 'clean') {
+      throw new PullMergeError(`PR #${number} is no longer ready to merge. Refresh the board and try again.`)
+    }
+    let result: ReturnType<typeof PullMergeResultSchema.parse>
+    try {
+      result = PullMergeResultSchema.parse(JSON.parse(await this.commands.api(`pulls/${number}/merge`, '-X', 'PUT', '-f', `sha=${pr.head.sha}`,
+        '-f', 'merge_method=merge')) as unknown)
+    } catch (error) {
+      if (error instanceof CliError && (error.code === 405 || error.code === 409)) {
+        throw new PullMergeError(`PR #${number} changed or is blocked from merging. Refresh the board and try again.`)
+      }
+      throw error
+    }
+    if (!result.merged) throw new PullMergeError(result.message ?? `GitHub did not merge PR #${number}`)
+    this.engine.threadClosed({ source: 'github', id: String(number) }, 'merged', now())
+    return { merged: true, number }
+  }
   ticketEnvironment(ticket: Ticket): Variable[] {
     const trigger = sourceTrigger(this, ticket)
     const { setup: { deployment }, sources } = this
@@ -220,10 +257,12 @@ export class Runtime extends Service implements SourceHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, setup, passes } = this
     return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks,
+      credentials: this.ctx.credentials,
       get deployment() { return setup.deployment },
       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),
-      checkSetup: () => { setup.check() }, requestPass: () => { passes.request() }, models: () => this.ctx.sessionController.modelCatalog() }
+      checkSetup: () => { setup.check() }, requestPass: () => { passes.request() }, models: () => this.ctx.sessionController.modelCatalog(),
+      mergeTicket: id => runtime.mergeTicket(id) }
   }
   /** Idempotent stop; concurrent or repeated calls share the same shutdown promise. */
   stop(): Promise<void> { return this.stopping ??= this.shutdown() }

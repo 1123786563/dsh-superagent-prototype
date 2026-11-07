@@ -1,6 +1,8 @@
 /** Type-only management API contract between the web panel and host routes, imported by the panel without bundling host code. */
 import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { PromptConfig, Prompts } from './prompts.ts'
+import type { BoardQuery } from './board.ts'
+import type { BoardView } from './views/board.ts'
 import type { PromptsView, StateView, TicketPageView } from './http.ts'
 import type { HistoryView } from './settings-history.ts'
 import type { OverviewView } from './views/overview.ts'
@@ -30,10 +32,12 @@ export interface Api {
   'POST triggers/:id/requeue': { response: { queued: boolean } }
   'GET decisions': { query?: Paged & { kind?: string; window?: '24h' }; response: DecisionListView }
   'POST decisions/:id/dismiss': { response: { dismissed: true } }
+  'GET board': { query?: BoardQuery; response: BoardView }
   'GET tickets': { query?: Paged & { state?: TicketFilter }; response: TicketListView }
   'GET tickets/:id': { response: TicketPageView }
   'POST tickets/:id/retry': { response: { retried: true } }
   'POST tickets/:id/stop': { response: { stopped: true } }
+  'POST tickets/:id/merge': { response: { merged: true; number: number } }
   'POST executor/pause': { body: { paused: boolean }; response: { paused: boolean } }
   'PUT settings/:block': { body: { value: unknown; revision: number }; response: { revision: number; restarting: boolean } }
   'GET policy/history': { response: HistoryView }
@@ -43,7 +47,12 @@ export interface Api {
   'GET prompts': { query?: { revision?: number; offset?: number }; response: PromptsView }
   'PUT prompts': { body: { config: PromptConfig; baseRevision: number }; response: { revision: number; context_delivery: Delivery } }
   'POST prompts/preview': { body: PromptConfig; response: ReturnType<Prompts['preview']> }
+  'GET corsair': { response: CorsairConnectionView }
+  'PUT corsair': { body: CorsairConnectionInput; response: CorsairConnectionView }
+  'DELETE corsair': { response: CorsairConnectionView }
 }
+export interface CorsairConnectionView { configured: boolean; endpoint?: string }
+export interface CorsairConnectionInput { endpoint: string; apiKey: string }
 type Path<K> = K extends `${string} ${infer P}` ? P : never
 type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name, string> & Params<Rest>
   : P extends `${string}:${infer Name}` ? Record<Name, string> : unknown

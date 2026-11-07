@@ -109,6 +109,9 @@
                   modelSelection: true
                   modelDiscovery: true
                   agentPreset: standard
+          # Per Worker, read Corsair credentials from the Host credential store and mount the shipped MCP client.
+          - id: corsair-worker
+            name: dsh-superagent/corsair-worker
           - id: tool-todo
             name: '@deepseek-ai/dsh-tool-todo'
             config:

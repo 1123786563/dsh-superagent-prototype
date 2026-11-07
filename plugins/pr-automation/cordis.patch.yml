@@ -1,0 +1,50 @@
+[
+  {
+    "insert": [
+      {
+        "id": "dsh-pr-automation",
+        "name": "@local/dsh-pr-automation",
+        "config": {
+          "repository": "1123786563/OpenBot",
+          "cli": "/Users/wuyongjun/.local/bin/gh-agent",
+          "baseBranch": "main",
+          "label": "auto-review",
+          "autoMerge": true,
+          "mergeMethod": "merge",
+          "pollSeconds": 60,
+          "maxChangedLines": 500,
+          "maxContextChars": 180000,
+          "stateDir": "/Users/wuyongjun/trea/dsh-superagent-prototype/.artifacts/pr-automation",
+          "superagentOrigin": "http://127.0.0.1:3200",
+          "provider": "magpie",
+          "model": "group/cc-stable",
+          "reasoningEffort": "high",
+          "ciMode": "local",
+          "localCi": {
+            "sourceDirectory": "/Users/wuyongjun/trea/OpenBot",
+            "actCli": "/Users/wuyongjun/trea/dsh-superagent-prototype/.artifacts/pr-automation/act-dsh-isolated",
+            "dockerCli": "/usr/local/bin/docker",
+            "runnerImage": "sha256:2dfe82833be3b113b1b259de84a5cbfd8e5a42fa4b8137ea5d206fca6d75af4b",
+            "architecture": "linux/arm64",
+            "timeoutSeconds": 5400,
+            "cpus": 4,
+            "memoryGb": 10,
+            "publishStatus": true,
+            "jobs": [
+              { "workflow": ".github/workflows/ci.yml", "job": "static" },
+              { "workflow": ".github/workflows/ci.yml", "job": "deployables",
+                "services": [] },
+              { "workflow": ".github/workflows/ci.yml", "job": "test",
+                "services": [
+                  { "service": "postgres", "hostPort": 15432, "containerPort": 5432 },
+                  { "service": "enterprise-postgres", "hostPort": 15434, "containerPort": 5432 },
+                  { "service": "me-postgres", "hostPort": 15433, "containerPort": 5432 }
+                ] },
+              { "workflow": ".github/workflows/ci.yml", "job": "build" }
+            ]
+          }
+        }
+      }
+    ]
+  }
+]

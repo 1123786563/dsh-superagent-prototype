@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, vi } from 'vitest'
 import { z } from 'zod'
 import type { ConfigForm, ConfigFormSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { Api, ApiResponse, RouteParams } from '../../src/app/api.ts'
+import { BOARD_COLUMNS } from '../../src/app/board.ts'
 import { SKILL_NAME, SKILL_PREFIX, TEAM_SECTIONS, builtInBase, builtInPart, builtInParts, composePrompt, composeSkill, defaultPrompts,
   environmentSection, policySection, promptParts } from '../../src/app/prompts.ts'
 import type { DroppedReply, HistoryView, Problem, PromptsView, SetupView, SourceStatusRow, SourceView, StateView, ThreadPageView,
@@ -292,7 +293,34 @@ const SourceSave = z.object({ enabled: z.boolean(), config: z.unknown() })
 
 const ROUTES: { [K in keyof Api]: Route<K> } = {
   'GET state': { answer: stateView },
+  'GET corsair': { answer: () => ({ configured: false }) },
+  'PUT corsair': { body: true, answer: () => refuse(400, 'Invalid endpoint') },
+  'DELETE corsair': { answer: () => ({ configured: false }) },
   'GET overview': { answer: overviewView },
+  'GET board': { query: ['q', 'source', 'order', 'column', 'offset', 'limit'], answer: ({ query }) => {
+    const term = query.q?.trim().toLowerCase() ?? ''
+    const source = query.source?.trim() ?? ''
+    const tickets = [...server.tickets.open, ...server.tickets.ended]
+    const associated = (ticket: TicketRow) => [server.ticketDetails[ticket.id]?.mandate.actor.source,
+      ...ticket.threads.map(thread => thread.source)].filter((id): id is string => !!id)
+    const sourceIds = new Set([...KINDS.map(kind => kind.kind), ...tickets.flatMap(associated)])
+    const filtered = tickets.filter(ticket => (!source || associated(ticket).includes(source)) && (!term
+      || [ticket.id, ticket.title, ...ticket.threads.flatMap(thread => [thread.key, thread.title, thread.url ?? '',
+        JSON.stringify(thread.facts)])].some(value => value.toLowerCase().includes(term))))
+    const timestamp = (ticket: TicketRow) => query.order === 'created' || query.order === 'oldest' ? ticket.createdAt : ticket.updatedAt
+    filtered.sort((a, b) => (query.order === 'oldest' ? timestamp(a).localeCompare(timestamp(b))
+      : timestamp(b).localeCompare(timestamp(a))) || a.id.localeCompare(b.id))
+    const limit = Math.min(100, Math.max(1, Math.trunc(Number(query.limit ?? 20))))
+    const offset = Math.max(0, Math.trunc(Number(query.offset ?? 0)))
+    const columns = BOARD_COLUMNS.map(id => {
+      const items = filtered.filter(ticket => (ticket.stage === 'working' && ticket.action === 'queued' ? 'queued' : ticket.stage) === id)
+      const start = query.column === id ? offset : 0
+      return { id, total: items.length, items: items.slice(start, start + limit),
+        next_offset: start + limit < items.length ? start + limit : null }
+    })
+    return { columns, total: filtered.length, sources: [...sourceIds].sort().map(id => ({ id,
+      title: KINDS.find(kind => kind.kind === id)?.title ?? { zh: id, en: id } })), repository: server.setup.accounts?.repository }
+  } },
   'GET search': { query: ['q'], answer: async ({ query }) => {
     const q = query.q ?? ''
     await server.searching?.(q)
@@ -330,14 +358,21 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'POST tickets/:id/retry': { answer: ({ params }) => {
     const ticket = ticketOf(params.id)
     if (!ticket) return refuse(404, 'Ticket not found')
-    return ticket.actions.retry ? { retried: true } : refuse(400, 'Only an open ticket can be retried, and only when its worker last reported failed or blocked and no person has sent a message since, or when delivering an Input to its worker failed',
+    if (!ticket.actions.retry) return refuse(400, 'Only an open ticket can be retried, and only when its worker last reported failed or blocked and no person has sent a message since, or when delivering an Input to its worker failed',
       { code: 'notRetryable', values: {} })
+    const retried = { stage: 'working' as const, action: 'queued' as const, note: undefined, actions: { retry: false, stop: true } }
+    server.tickets.open = server.tickets.open.map(item => item.id === ticket.id ? { ...item, ...retried } : item)
+    // Overview's separately supplied attention projection remains controlled by its existing scenarios.
+    const detail = server.ticketDetails[ticket.id]
+    if (detail) server.ticketDetails[ticket.id] = { ...detail, ...retried }
+    return { retried: true }
   } },
   'POST tickets/:id/stop': { answer: ({ params }) => {
     if (!ticketOf(params.id)) return refuse(404, 'Ticket not found')
     server.tickets.open = []; server.person = server.person.filter(ticket => ticket.id !== params.id)
     return { stopped: true }
   } },
+  'POST tickets/:id/merge': { answer: ({ params }) => ticketOf(params.id) ? { merged: true, number: 42 } : refuse(404, 'Ticket not found') },
   'POST executor/pause': { body: true, answer: ({ body }) => {
     server.settings = { ...server.settings, paused: body.paused }
     server.revisions.pause = (server.revisions.pause ?? 0) + 1
